@@ -29,6 +29,7 @@ mail content: only opaque FCM tokens, state-id hashes, and timing.
 | `GET` | `/api/push/verify/:id` | Poll for the JMAP `PushVerification` code |
 | `GET` | `/api/push/active/:id` | Liveness probe — `{ active }` if the subscription has forwarded a push (or was just registered); `404` if unknown. Clients use it to reap dead leftover subscriptions without touching live ones |
 | `POST` | `/api/push/jmap/:id` | JMAP server posts `PushVerification` or `StateChange` here — relay dispatches FCM or Web Push depending on the stored record |
+| `POST` | `/api/push/internal/access-approval` | Bearer-authenticated, server-only opaque access-approval wake-up dispatch |
 | `GET` | `/api/push/vapid-public-key` | Returns the relay's VAPID public key so browsers can subscribe |
 | `GET` | `/api/health` | Liveness probe |
 
@@ -67,6 +68,7 @@ docker compose up -d
 | `VAPID_PUBLIC_KEY` | unset | Base64url-encoded P-256 public key for Web Push. Generate with `npx web-push generate-vapid-keys` |
 | `VAPID_PRIVATE_KEY` | unset | Matching private key. Web Push is disabled if either VAPID var is missing |
 | `VAPID_SUBJECT` | `mailto:postmaster@localhost` | `mailto:` or `https:` contact the push services can reach if the relay misbehaves (RFC 8292) |
+| `ACCESS_APPROVAL_DISPATCH_TOKEN` | unset | Minimum 32-character bearer for the server-only access-approval dispatch endpoint; unset disables that endpoint |
 
 ## License
 

@@ -1,9 +1,10 @@
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
 import { logger } from './logger.js';
 import { subscriptionStore } from './store.js';
 import { sendFcmPush } from './fcm.js';
-import { getVapidPublicKey, sendWebPush } from './webpush.js';
+import { getVapidPublicKey, sendWebPush, sendWebPushPayload } from './webpush.js';
 import {
   isValidFcmToken,
   isValidSubscriptionId,
@@ -26,6 +27,7 @@ import {
   pushesForwarded,
   fcmDurationSeconds,
   webPushDurationSeconds,
+  accessApprovalPushes,
 } from './metrics.js';
 
 const PORT = Number(process.env.PORT ?? 3003);
@@ -40,6 +42,7 @@ const REPO_URL = 'https://github.com/bulwarkmail/relay';
 // see the in-progress one as dead and reap it. 10 minutes comfortably covers
 // the JMAP verify window plus slack.
 const ACTIVE_GRACE_MS = 10 * 60 * 1000;
+const MAX_ACCESS_APPROVAL_SUBSCRIPTIONS = 16;
 
 const LANDING_HTML = `<!doctype html>
 <html lang="en">
@@ -317,6 +320,86 @@ async function handleJmap(
   return sendJson(res, 400, { error: 'Unsupported JMAP push type' });
 }
 
+function accessApprovalAuthorized(req: http.IncomingMessage): boolean | null {
+  const expected = process.env.ACCESS_APPROVAL_DISPATCH_TOKEN?.trim();
+  if (!expected || expected.length < 32) return null;
+  const header = req.headers.authorization ?? '';
+  const supplied = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  return (
+    expectedBytes.length === suppliedBytes.length &&
+    timingSafeEqual(expectedBytes, suppliedBytes)
+  );
+}
+
+async function handleAccessApprovalDispatch(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const authorized = accessApprovalAuthorized(req);
+  if (authorized == null) {
+    accessApprovalPushes.inc({ result: 'disabled' });
+    return sendJson(res, 503, { error: 'Access approval dispatch not configured' });
+  }
+  if (!authorized) {
+    accessApprovalPushes.inc({ result: 'unauthorized' });
+    return sendJson(res, 401, { error: 'Unauthorized' });
+  }
+
+  const body = (await readJson(req)) as
+    | { kind?: unknown; subscriptionIds?: unknown }
+    | null
+    | undefined;
+  if (
+    !body ||
+    body.kind !== 'access-approval' ||
+    !Array.isArray(body.subscriptionIds) ||
+    body.subscriptionIds.length < 1 ||
+    body.subscriptionIds.length > MAX_ACCESS_APPROVAL_SUBSCRIPTIONS ||
+    body.subscriptionIds.some((id) => !isValidSubscriptionId(id))
+  ) {
+    accessApprovalPushes.inc({ result: 'invalid' });
+    return sendJson(res, 400, { error: 'Invalid access approval dispatch' });
+  }
+
+  const ids = [...new Set(body.subscriptionIds as string[])];
+  const result = { delivered: 0, missing: 0, removed: 0, failed: 0 };
+  for (const id of ids) {
+    const record = await subscriptionStore.get(id);
+    if (!record || record.kind !== 'web') {
+      result.missing += 1;
+      continue;
+    }
+    const timer = webPushDurationSeconds.startTimer();
+    const sent = await sendWebPushPayload(
+      record,
+      { kind: 'access-approval' },
+      { ttl: 120, topic: 'comail-access-approval' },
+    );
+    timer();
+    if (sent.ok) {
+      result.delivered += 1;
+      record.lastPushAt = Date.now();
+      await subscriptionStore.put(id, record);
+    } else if (sent.unregistered) {
+      result.removed += 1;
+      await subscriptionStore.delete(id);
+      subscriptionsUnregistered.inc({
+        reason: 'webpush-gone',
+        transport: 'web',
+      });
+    } else {
+      result.failed += 1;
+    }
+  }
+  await refreshActiveGauge();
+  accessApprovalPushes.inc({
+    result: result.failed > 0 ? 'partial_failure' : 'success',
+  });
+  return sendJson(res, 200, { ok: result.failed === 0, ...result });
+}
+
 async function dispatchStateChange(
   record: SubscriptionRecord,
   body: Extract<JmapPushBody, { '@type': 'StateChange' }>,
@@ -353,6 +436,9 @@ function normalizeRoute(method: string, path: string): string {
   if (/^\/api\/push\/verify\/[^/]+$/.test(path)) return '/api/push/verify/:id';
   if (/^\/api\/push\/active\/[^/]+$/.test(path)) return '/api/push/active/:id';
   if (/^\/api\/push\/jmap\/[^/]+$/.test(path)) return '/api/push/jmap/:id';
+  if (path === '/api/push/internal/access-approval') {
+    return '/api/push/internal/access-approval';
+  }
   return 'other';
 }
 
@@ -423,6 +509,13 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 503, { error: 'Web Push not configured' });
       }
       return sendJson(res, 200, { publicKey: key });
+    }
+
+    if (
+      method === 'POST' &&
+      path === '/api/push/internal/access-approval'
+    ) {
+      return await handleAccessApprovalDispatch(req, res);
     }
 
     const registerIdMatch = path.match(/^\/api\/push\/register\/([^/]+)$/);

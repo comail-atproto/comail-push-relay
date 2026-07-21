@@ -41,23 +41,27 @@ export async function sendWebPush(
   record: WebSubscriptionRecord,
   change: StateChange,
 ): Promise<WebPushSendResult> {
-  if (!ensureConfigured()) {
-    return { ok: false, status: 0, unregistered: false };
-  }
-
-  // Mirror the FCM payload shape: just a wake-up ping. The service worker
-  // turns this into an enriched system notification by JMAP-fetching the
-  // newest unread email itself - so the relay never sees mail content.
-  const payload = JSON.stringify({
+  return sendWebPushPayload(record, {
     kind: 'jmap-state-change',
     accountLabel: record.accountLabel ?? '',
     changed: change.changed ?? {},
   });
+}
+
+export async function sendWebPushPayload(
+  record: WebSubscriptionRecord,
+  payload: Readonly<Record<string, unknown>>,
+  options: { ttl?: number; topic?: string } = {},
+): Promise<WebPushSendResult> {
+  if (!ensureConfigured()) {
+    return { ok: false, status: 0, unregistered: false };
+  }
 
   try {
-    const res = await webpush.sendNotification(record.webPush, payload, {
-      TTL: 60 * 60, // seconds — drop if the device is offline for an hour
+    const res = await webpush.sendNotification(record.webPush, JSON.stringify(payload), {
+      TTL: options.ttl ?? 60 * 60,
       urgency: 'high',
+      ...(options.topic ? { topic: options.topic } : {}),
     });
     return { ok: true, status: res.statusCode, unregistered: false };
   } catch (error) {

@@ -59,6 +59,13 @@ export const pushesForwarded = new Counter({
   registers: [registry],
 });
 
+export const accessApprovalPushes = new Counter({
+  name: 'relay_access_approval_pushes_total',
+  help: 'Authenticated access-approval wake-up dispatch outcomes',
+  labelNames: ['result'] as const,
+  registers: [registry],
+});
+
 export const fcmDurationSeconds = new Histogram({
   name: 'relay_fcm_send_duration_seconds',
   help: 'Latency of POST to fcm.googleapis.com',
