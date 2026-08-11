@@ -1,23 +1,23 @@
-<div align="center">
+# comail-push-relay
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main//public/branding/Bulwark_Logo_with_Lettering_White_and_Color.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main//public/branding/Bulwark_Logo_with_Lettering_Dark_Color.svg" />
-  <img src="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main//public/branding/Bulwark_Logo_with_Lettering_Dark_Color.svg" alt="Bulwark Webmail" width="280" />
-</picture>
+comail's fork of [Bulwark Relay](https://github.com/bulwarkmail/relay), the
+privacy-preserving push notification relay for
+[Bulwark Webmail](https://github.com/bulwarkmail/webmail). It terminates JMAP
+`PushSubscription` pushes from the mail server and forwards an opaque wake-up
+to the client — FCM for mobile, Web Push for the PWA — so clients fetch new
+mail over their own JMAP connection. The relay never sees mail content: only
+opaque tokens, state-id hashes, and timing.
 
-</div>
+This fork backs [comail](https://comail.at) Inbox and adds, beyond upstream:
 
-# Bulwark Relay
+- **Web Push (VAPID) delivery** for browser/PWA clients alongside FCM
+- **Opaque access-approval wake-ups** — a bearer-authenticated, server-only
+  dispatch endpoint so one browser `PushSubscription`/VAPID key pair can carry
+  both mail and access-approval notifications safely
+- A **subscription liveness probe** so clients can reap dead subscriptions
 
-Push notification relay for Bulwark Webmail. Terminates JMAP `PushSubscription`
-pushes from the user's mail server and forwards them to Firebase Cloud
-Messaging so the mobile app wakes up and fetches new mail over its own JMAP
-connection.
-
-Designed so self-hosters don't need their own Firebase project, a single
-hosted instance serves every Bulwark client that opts in. The relay never sees
-mail content: only opaque FCM tokens, state-id hashes, and timing.
+Upstream: https://github.com/bulwarkmail/relay — licensed AGPL-3.0-only, as is
+this fork. Bulwark's name and branding belong to the Bulwark project.
 
 ## Endpoints
 
