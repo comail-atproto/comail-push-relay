@@ -8,6 +8,7 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts"
   },
