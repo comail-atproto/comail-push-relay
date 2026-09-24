@@ -442,6 +442,10 @@ function normalizeRoute(method: string, path: string): string {
   return 'other';
 }
 
+const releaseIdentity = /^[0-9a-f]{40}-[0-9a-f]{16}$/.test(process.env.COMAIL_RELEASE_IDENTITY ?? "")
+  ? process.env.COMAIL_RELEASE_IDENTITY
+  : undefined;
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const method = req.method ?? 'GET';
@@ -474,7 +478,7 @@ const server = http.createServer(async (req, res) => {
 
     if (method === 'GET' && path === '/api/health') {
       const count = await subscriptionStore.size();
-      return sendJson(res, 200, { ok: true, subscriptions: count });
+      return sendJson(res, 200, { ok: true, subscriptions: count, release_identity: releaseIdentity });
     }
 
     if (method === 'GET' && (path === '/' || path === '/index.html')) {
