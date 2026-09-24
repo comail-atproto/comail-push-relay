@@ -1,0 +1,132 @@
+name: Test and deploy push relay
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [seed, promote, rollback]
+        required: true
+      source_run_id:
+        description: Successful main push run containing the release archive
+        required: false
+      release_identity:
+        description: Retained SHA-digest identity for rollback
+        required: false
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build and test push relay
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: bash scripts/test-health-release.sh
+      - name: Package immutable push relay release
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          mkdir -p .release/dist
+          cp -a dist/. .release/dist/
+          cp -a node_modules package.json .release/dist/
+          printf '{"app":"push-relay","source_sha":"%s"}\n' "$GITHUB_SHA" > .release/release.json
+          tar -C .release --exclude=dist/node_modules/.bin -czf release.tar.gz release.json dist
+          sha256sum release.tar.gz > release.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'push'
+        with:
+          name: push-relay-release
+          path: |
+            release.tar.gz
+            release.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    name: Seed, deploy, or roll back push relay
+    needs: build
+    if: >-
+      always() && ((github.event_name == 'push' && needs.build.result == 'success' && vars.COMAIL_PUSH_DEPLOY_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment: production
+    concurrency:
+      group: push-relay-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_ID }}
+          oauth-secret: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
+          tags: tag:comail-app-deploy
+      - name: Verify promotion source
+        id: source-run
+        if: github.event_name == 'workflow_dispatch' && inputs.action != 'rollback'
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          const id = process.env.SOURCE_RUN_ID;
+          if (!/^\d+$/.test(id)) throw new Error('source_run_id must be numeric');
+          const url = `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${id}`;
+          const response = await fetch(url, {headers: {Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json'}});
+          if (!response.ok) throw new Error(`source run lookup failed: ${response.status}`);
+          const run = await response.json();
+          if (run.event !== 'push' || run.head_branch !== 'main' || run.path !== '.github/workflows/release.yml') {
+            throw new Error('source run is not a main push of this workflow');
+          }
+          const jobsResponse = await fetch(`${url}/jobs?per_page=100`, {headers: {Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json'}});
+          if (!jobsResponse.ok) throw new Error(`source job lookup failed: ${jobsResponse.status}`);
+          const jobs = await jobsResponse.json();
+          if (!jobs.jobs.some(job => job.name === 'Build and test push relay' && job.conclusion === 'success')) {
+            throw new Error('source build and test job did not succeed');
+          }
+          const fs = await import('node:fs');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `source_sha=${run.head_sha}\n`);
+          NODE
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        if: github.event_name == 'push' || inputs.action != 'rollback'
+        with:
+          name: push-relay-release
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Select and verify push relay release
+        env:
+          DEPLOY_KEY: ${{ secrets.COMAIL_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.COMAIL_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.COMAIL_DEPLOY_HOST }}
+          DEPLOY_ORIGIN: ${{ vars.COMAIL_DEPLOY_ORIGIN }}
+          PROMOTED_SOURCE_SHA: ${{ steps.source-run.outputs.source_sha }}
+          RELEASE_IDENTITY: ${{ inputs.release_identity }}
+        run: bash scripts/deploy-release.sh "${{ github.event_name == 'workflow_dispatch' && inputs.action == 'seed' && 'seed' || github.event_name == 'workflow_dispatch' && inputs.action == 'rollback' && 'rollback' || 'install' }}"
+      - name: Save release receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-production
+          path: ${{ runner.temp }}/comail-release-receipt.json
+          if-no-files-found: ignore
+          retention-days: 90
