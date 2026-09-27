@@ -73,3 +73,10 @@ docker compose up -d
 ## License
 
 Licensed under the GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
+
+## Contributing and security
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, signed commits, review,
+native GitHub stacks, and PR attachments. [AI_POLICY.md](AI_POLICY.md) adopts
+AI Allowed; disclosure of AI use is optional. Report vulnerabilities through
+[SECURITY.md](SECURITY.md). Track work in GitHub and Linear; Chainlink is retired.
