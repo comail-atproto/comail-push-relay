@@ -74,3 +74,17 @@ bash scripts/test-health-release.sh
 
 Run `python3 -B scripts/test_review_media.py` for review policy changes.
 Check staged files with `python3 scripts/check-review-media.py --staged`.
+
+## Names and prose
+
+Use familiar domain terms and keep one name for each concept. Name workflows and
+jobs for the action they perform and the thing they act on, such as "Test and
+deploy operator". Use descriptive API, type, and file names. Keep phase numbers,
+tracker IDs, slogans, and temporary rollout state out of permanent names.
+
+Write README text, comments, issues, PRs, logs, and error messages in plain language.
+State what happened, what it affects, and what the reader can do next. Remove
+filler, exaggerated claims, staged openings, and repeated conclusions. Agents run
+the Humanizer skill on substantial prose and check that facts and constraints
+survive the edit. Prefer the existing project pattern or a standard platform
+feature; add a custom mechanism only when a concrete requirement needs it.

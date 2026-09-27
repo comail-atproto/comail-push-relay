@@ -13,3 +13,8 @@ stack metadata. Upload PR screenshots and recordings as native attachments;
 never commit review media. Preserve product assets and historical review links.
 Write comments about current contracts and reasons; remove obsolete narration
 when editing an area. Preserve security boundaries and generated/license notices.
+
+Use established domain names consistently. Name workflows and jobs for their
+action and subject. Follow the naming and prose rules in CONTRIBUTING.md and run
+Humanizer on substantial prose. Prefer existing patterns and standard platform
+features over new conventions or custom tooling.
