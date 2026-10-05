@@ -1,10 +1,30 @@
 # Push relay required-check handoff
 
-This document accompanies the draft removal of the duplicate `Validate push relay / ci` workflow. It does not change repository settings or enable deployment.
+Removing the duplicate `Validate push relay` workflow leaves the required `ci`
+check without a producer. The settings handoff below must happen before this
+change can merge. Repository settings and deployment enablement are unchanged.
 
-1. Merge the validation and release layers below this draft in native stack #3. Confirm the main-push `Build and test push relay` job runs the behavior tests, health check, high-severity dependency audit, pinned secret scan, and artifact package successfully.
-2. With repository-admin access, inspect the actual classic branch protection and rulesets for `main`. This audit credential receives HTTP 403 for the classic protection read, so the current required contexts are unverified. Select the observed release build job as required, using its exact check name and GitHub App source shown in settings. Keep the old `ci` requirement during the overlap.
-3. Verify a pull request with a failed release build cannot satisfy the required check. Then remove the old `ci` requirement, confirm this draft's exact-head release check is green, and only then merge the workflow deletion.
-4. After merge, verify one PR validation run and one main-push build/artifact run. Leave `COMAIL_PUSH_DEPLOY_ENABLED` disabled until the separate host and credential preflight is approved.
+`Test and deploy push relay` keeps every check the deleted workflow ran:
+behavior tests, `npm audit --audit-level=high`, and the pinned TruffleHog secret
+scan. It also runs the release health/identity script and, on main, packages the
+immutable release artifact. Release, deployment, and rollback workflows are
+unchanged.
 
-If the replacement check cannot be required, leave this draft open. The old workflow continues to supply its check while the release build also runs the same gates.
+The blocker is repository ruleset `Main branch review and CI` (id 24007679,
+`active`), whose required status checks are `ci` and
+`Build and test push relay` with `strict_required_status_checks_policy: true`.
+The `ci` context must be removed by an administrator before this deletion can
+merge:
+
+1. Require the observed `Build and test push relay` check (GitHub App
+   `github-actions` source) on `main`; it is already listed.
+2. Prove a pull request with a failed `Build and test push relay` cannot merge,
+   keeping both checks required during the overlap.
+3. Remove the `ci` requirement, confirm this branch's exact-head
+   `Build and test push relay` run is green, then merge the deletion.
+4. After merge, verify one pull-request run and one main-push build/artifact
+   run. Leave `COMAIL_PUSH_DEPLOY_ENABLED` unchanged unless the separate host
+   and credential preflight is approved.
+
+If the replacement check cannot be made required, keep this branch open: the old
+workflow stays on `main` supplying `ci` until the handoff is possible.
