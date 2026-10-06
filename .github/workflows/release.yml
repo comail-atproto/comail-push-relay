@@ -60,6 +60,19 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  ci:
+    name: ci
+    needs: build
+    if: always() && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require successful push relay tests
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: test "$BUILD_RESULT" = success
+
   deploy:
     name: Seed, deploy, or roll back push relay
     needs: build
