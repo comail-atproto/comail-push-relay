@@ -49,5 +49,6 @@ privately through [SECURITY.md](SECURITY.md).
 
 Respect the repository's license and contributor authorship.
 [AI-assisted contributions are allowed](AI_POLICY.md) without disclosure or model
-attribution. Contributors remain responsible for correctness, testing, authorship
-and the right to submit their work.
+attribution. Prefer omitting "AI-assisted" stamps and boilerplate model credits.
+Contributors remain responsible for correctness, testing, authorship and the right
+to submit their work.
