@@ -58,11 +58,19 @@ focused and run the relevant checks from this repository. Do not edit generated
 or vendored code to change product behavior; update its source and regenerate or
 repin it. Preserve authentication, authorization, privacy, and transaction boundaries.
 
-Comments explain contracts, constraints, and reasons that the code cannot express.
-Remove stale rollout stories, obsolete tracker IDs, and narration of obvious code
-when editing that area. Keep necessary security reasoning, protocol details,
-license notices, and generator directives. Track unfinished work in GitHub or
-Linear and describe any current limitation next to the code that owns it.
+Keep comments brief. Explain contracts, constraints, and reasons that the code
+does not make clear. Omit narration that repeats the code. Keep local development
+tools, assistant instructions, work notes, progress updates, and tracker references
+out of product code and comments.
+Tool setup belongs in development documentation or configuration; work history
+belongs in issues and PRs. Describe current limitations next to the code that owns them. Preserve
+necessary security reasoning, protocol details, licenses, and generator directives.
+
+Review the complete diff before publication and run the affected checks. Remove
+temporary probes, unused code, and redundant wrappers. Verify callers and
+operational use before removing compatibility paths or rollout flags; retain
+uncertain candidates. Preserve production diagnostics. Work in reviewable batches
+across related packages.
 
 ## Local checks
 
@@ -84,7 +92,6 @@ tracker IDs, slogans, and temporary rollout state out of permanent names.
 
 Write README text, comments, issues, PRs, logs, and error messages in plain language.
 State what happened, what it affects, and what the reader can do next. Remove
-filler, exaggerated claims, staged openings, and repeated conclusions. Agents run
-the Humanizer skill on substantial prose and check that facts and constraints
-survive the edit. Prefer the existing project pattern or a standard platform
-feature; add a custom mechanism only when a concrete requirement needs it.
+filler, exaggerated claims, staged openings, and repeated conclusions. Preserve
+facts and constraints when editing prose. Prefer existing project patterns and
+standard platform features; add a custom mechanism only for a concrete requirement.
