@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: mailto:security@comail.at
+    url: mailto:security@comail.team
     about: Send sensitive reports privately. Do not include secrets or user data.
