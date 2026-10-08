@@ -10,6 +10,17 @@ gaps. Link the relevant issue, or explain `No-Issue: <reason>` for a small chang
 Required checks and an approving review must pass before merge. Commits need a
 verified signature and a DCO sign-off (`git commit -s`).
 
+The required PR sections are What & why, Test evidence, and Deployment impact.
+Other sections, including Change shape, Before / after, and Rollback, are
+optional. Omit unused headings. Include required visual evidence and relevant
+dependency or rollback details in the required sections or a useful extra
+section.
+
+A rollback plan is required for infrastructure or backend releases, or changes
+to persistent state, schemas, credentials, or API compatibility. Include
+recovery checks and effects a code revert cannot undo. For a simple frontend
+release, name the normal previous-version redeploy path.
+
 Use GitHub stacks for dependent PRs in this repository. Describe dependencies on
 other repositories and any compatibility, deployment or rollback requirements.
 
