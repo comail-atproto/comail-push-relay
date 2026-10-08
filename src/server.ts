@@ -566,7 +566,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  logger.info('relay: listening', { host: HOST, port: PORT });
+  // Report the bound address so a PORT=0 start exposes the assigned port.
+  const address = server.address();
+  const boundPort = address && typeof address === 'object' ? address.port : PORT;
+  logger.info('relay: listening', { host: HOST, port: boundPort });
 });
 
 const shutdown = (signal: string) => {
