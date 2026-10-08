@@ -57,6 +57,12 @@ cp path/to/fcm-service-account.json data/
 docker compose up -d
 ```
 
+## Tests
+
+`npm test` builds and runs every native Node test. See
+[docs/testing.md](docs/testing.md) for the unit and component selections,
+determinism guarantees, and failure artifacts.
+
 ## Environment
 
 | Var | Default | Notes |
