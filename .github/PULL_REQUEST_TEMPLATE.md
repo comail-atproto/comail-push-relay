@@ -22,6 +22,9 @@ sensitive saved plans. -->
 ## Deployment impact
 
 <!-- Name the owning release workflow, affected services, compatible API rollout
-order, migrations, and verification. For docs/tooling-only changes write none.
-Describe rollback and any state or schema effects that reverting code cannot
-reverse when relevant. -->
+order, migrations, and verification.
+Include rollback steps and recovery checks for infrastructure or backend
+releases, or changes to persistent state, schemas, credentials, or API
+compatibility. Explain any effects a code revert cannot undo. For a simple
+frontend release, name the normal previous-version redeploy path.
+For docs/tooling-only changes write none. -->
