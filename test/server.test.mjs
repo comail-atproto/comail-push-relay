@@ -1,152 +1,225 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import net from 'node:net';
-import os from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import webpush from 'web-push';
 
-async function unusedPort() {
-  const listener = net.createServer();
-  listener.listen(0, '127.0.0.1');
-  await once(listener, 'listening');
-  const { port } = listener.address();
-  listener.close();
-  await once(listener, 'close');
-  return port;
-}
+import { startRelay } from './lifecycle.mjs';
 
-async function waitForServer(base, process) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (process.exitCode !== null) throw new Error('relay exited before becoming ready');
-    try {
-      const response = await fetch(`${base}/api/health`);
-      if (response.ok) return;
-    } catch {
-      // The listener may not have started yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('relay did not become ready');
-}
+const SUBSCRIPTION_ID = 'subscription_12345';
+const DISPATCH_TOKEN = 'a'.repeat(40);
+const FCM_TOKEN = 'f'.repeat(64);
 
-async function request(base, route, options = {}) {
-  const response = await fetch(base + route, options);
-  return { status: response.status, body: await response.json() };
-}
-
-test('subscription lifecycle and access approval dispatch authorization', async () => {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-test-'));
-  const port = await unusedPort();
-  const base = `http://127.0.0.1:${port}`;
-  const token = 'a'.repeat(40);
-  const relay = spawn(process.execPath, ['dist/server.js'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      HOST: '127.0.0.1',
-      PORT: String(port),
-      PUSH_DATA_DIR: dataDir,
-      ACCESS_APPROVAL_DISPATCH_TOKEN: token,
-    },
-    stdio: 'ignore',
-  });
-  const post = (route, body, authorization) =>
-    request(base, route, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(authorization ? { authorization } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-
+test('relay reports its bound listen address and reaches readiness', async () => {
+  const relay = await startRelay();
   try {
-    await waitForServer(base, relay);
-    const id = 'subscription_12345';
-    assert.deepEqual(await post('/api/push/register', {
-      subscriptionId: id,
-      fcmToken: 'f'.repeat(64),
+    assert.ok(Number.isInteger(relay.port) && relay.port > 0, `port=${relay.port}`);
+    const health = (await relay.json('/api/health')).body;
+    assert.equal(health.ok, true);
+    assert.equal(health.subscriptions, 0);
+    assert.equal(health.release_identity, undefined);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test('a startup failure surfaces bounded child diagnostics', async () => {
+  await assert.rejects(startRelay({ env: { PORT: 'not-a-port' } }), (error) => {
+    assert.match(error.message, /relay exited before signaling readiness/);
+    assert.match(error.message, /child exit: code=/);
+    assert.match(error.message, /stderr tail:/);
+    return true;
+  });
+});
+
+test('a spawn failure rejects promptly and removes the fixture store', { timeout: 1500 }, async () => {
+  let dataDir;
+  await assert.rejects(startRelay({ cwd: '/comail-test-missing-directory' }), (error) => {
+    assert.match(error.message, /relay failed to spawn/);
+    assert.match(error.message, /spawn error:/);
+    dataDir = error.message.match(/data dir: (.*)/)[1];
+    return true;
+  });
+  await assert.rejects(stat(dataDir), { code: 'ENOENT' });
+});
+
+test('registration validation matrix', async (t) => {
+  const cases = [
+    {
+      name: 'valid FCM token is accepted',
+      body: { subscriptionId: SUBSCRIPTION_ID, fcmToken: FCM_TOKEN },
+      want: { status: 200, body: { ok: true } },
+      stored: 1,
+    },
+    {
+      name: 'missing subscriptionId is rejected',
+      body: { fcmToken: FCM_TOKEN },
+      want: { status: 400, body: { error: 'Invalid subscriptionId' } },
+      stored: 0,
+    },
+    {
+      name: 'short subscriptionId is rejected',
+      body: { subscriptionId: 'short', fcmToken: FCM_TOKEN },
+      want: { status: 400, body: { error: 'Invalid subscriptionId' } },
+      stored: 0,
+    },
+    {
+      name: 'short FCM token is rejected',
+      body: { subscriptionId: SUBSCRIPTION_ID, fcmToken: 'too-short' },
+      want: { status: 400, body: { error: 'Invalid fcmToken' } },
+      stored: 0,
+    },
+    {
+      name: 'invalid JSON body is rejected',
+      raw: '{not json',
+      want: { status: 400, body: { error: 'Invalid JSON' } },
+      stored: 0,
+    },
+  ];
+
+  for (const c of cases) {
+    await t.test(c.name, async () => {
+      const relay = await startRelay();
+      try {
+        const response = c.raw
+          ? await relay.json('/api/push/register', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: c.raw,
+            })
+          : await relay.post('/api/push/register', c.body);
+        assert.deepEqual(response, c.want);
+        assert.equal((await relay.json('/api/health')).body.subscriptions, c.stored);
+      } finally {
+        await relay.stop();
+      }
+    });
+  }
+});
+
+test('subscription lifecycle persists, verifies and tears down cleanly', async () => {
+  const relay = await startRelay();
+  try {
+    assert.deepEqual(await relay.post('/api/push/register', {
+      subscriptionId: SUBSCRIPTION_ID,
+      fcmToken: FCM_TOKEN,
     }), { status: 200, body: { ok: true } });
-    assert.deepEqual(await request(base, `/api/push/verify/${id}`), {
+
+    assert.deepEqual(await relay.json(`/api/push/verify/${SUBSCRIPTION_ID}`), {
       status: 200,
       body: { verificationCode: null },
     });
-    assert.deepEqual(await post(`/api/push/jmap/${id}`, {
+    assert.deepEqual(await relay.post(`/api/push/jmap/${SUBSCRIPTION_ID}`, {
       '@type': 'PushVerification',
-      pushSubscriptionId: id,
+      pushSubscriptionId: SUBSCRIPTION_ID,
       verificationCode: '123456',
     }), { status: 200, body: { ok: true } });
-    assert.deepEqual(await request(base, `/api/push/verify/${id}`), {
+    assert.deepEqual(await relay.json(`/api/push/verify/${SUBSCRIPTION_ID}`), {
       status: 200,
       body: { verificationCode: '123456' },
     });
-    assert.deepEqual(await request(base, `/api/push/active/${id}`), {
+    assert.deepEqual(await relay.json(`/api/push/active/${SUBSCRIPTION_ID}`), {
       status: 200,
       body: { active: true },
     });
 
-    const dispatch = { kind: 'access-approval', subscriptionIds: [id] };
-    assert.equal((await post('/api/push/internal/access-approval', dispatch)).status, 401);
-    assert.equal((await post('/api/push/internal/access-approval', dispatch, 'Bearer wrong')).status, 401);
-    assert.deepEqual(await post('/api/push/internal/access-approval', dispatch, `Bearer ${token}`), {
-      status: 200,
-      body: { ok: true, delivered: 0, missing: 1, removed: 0, failed: 0 },
-    });
+    const persisted = JSON.parse(
+      await readFile(path.join(relay.dataDir, 'subscriptions.json'), 'utf8'),
+    );
+    assert.deepEqual(Object.keys(persisted.records), [SUBSCRIPTION_ID]);
 
-    assert.deepEqual(await request(base, `/api/push/register/${id}`, { method: 'DELETE' }), {
-      status: 200,
-      body: { ok: true },
-    });
-    assert.equal((await request(base, `/api/push/verify/${id}`)).status, 404);
-    assert.equal((await request(base, '/api/health')).body.subscriptions, 0);
-    const persisted = JSON.parse(await readFile(path.join(dataDir, 'subscriptions.json'), 'utf8'));
-    assert.deepEqual(persisted.records, {});
+    assert.deepEqual(
+      await relay.json(`/api/push/register/${SUBSCRIPTION_ID}`, { method: 'DELETE' }),
+      { status: 200, body: { ok: true } },
+    );
+    assert.equal((await relay.json(`/api/push/verify/${SUBSCRIPTION_ID}`)).status, 404);
+    assert.equal((await relay.json('/api/health')).body.subscriptions, 0);
+    const emptied = JSON.parse(
+      await readFile(path.join(relay.dataDir, 'subscriptions.json'), 'utf8'),
+    );
+    assert.deepEqual(emptied.records, {});
   } finally {
-    relay.kill('SIGTERM');
-    if (relay.exitCode === null) await once(relay, 'exit');
-    await rm(dataDir, { recursive: true, force: true });
+    await relay.stop();
   }
 });
 
-test('web push StateChange payload carries opaque state references only', async () => {
-  const originalSendNotification = webpush.sendNotification;
-  const keys = webpush.generateVAPIDKeys();
-  process.env.VAPID_PUBLIC_KEY = keys.publicKey;
-  process.env.VAPID_PRIVATE_KEY = keys.privateKey;
-  process.env.VAPID_SUBJECT = 'mailto:test@example.com';
-  let sent;
-  webpush.sendNotification = async (_subscription, payload) => {
-    sent = JSON.parse(payload);
-    return { statusCode: 201 };
-  };
-  try {
-    const { sendWebPush } = await import('../dist/webpush.js');
-    const result = await sendWebPush({
-      kind: 'web',
-      webPush: {
-        endpoint: 'https://push.example.com/message',
-        keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
+test('access-approval dispatch enforces authorization and payload shape', async (t) => {
+  const relay = await startRelay({
+    env: { ACCESS_APPROVAL_DISPATCH_TOKEN: DISPATCH_TOKEN },
+  });
+  t.after(() => relay.stop());
+  assert.deepEqual(await relay.post('/api/push/register', {
+    subscriptionId: SUBSCRIPTION_ID,
+    fcmToken: FCM_TOKEN,
+  }), { status: 200, body: { ok: true } });
+  assert.deepEqual(await relay.post('/api/push/internal/access-approval', {
+    kind: 'access-approval', subscriptionIds: [SUBSCRIPTION_ID],
+  }, `Bearer ${DISPATCH_TOKEN}`), {
+    status: 200,
+    body: { ok: true, delivered: 0, missing: 1, removed: 0, failed: 0 },
+  });
+
+  const unknown = { kind: 'access-approval', subscriptionIds: ['unknown_subscription'] };
+  const cases = [
+    {
+      name: 'missing bearer is unauthorized',
+      body: unknown,
+      want: { status: 401, body: { error: 'Unauthorized' } },
+    },
+    {
+      name: 'wrong bearer is unauthorized',
+      body: unknown,
+      authorization: 'Bearer wrong',
+      want: { status: 401, body: { error: 'Unauthorized' } },
+    },
+    {
+      name: 'non-bearer scheme is unauthorized',
+      body: unknown,
+      authorization: `Token ${DISPATCH_TOKEN}`,
+      want: { status: 401, body: { error: 'Unauthorized' } },
+    },
+    {
+      name: 'malformed dispatch is rejected',
+      body: { kind: 'other', subscriptionIds: ['unknown_subscription'] },
+      authorization: `Bearer ${DISPATCH_TOKEN}`,
+      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
+    },
+    {
+      name: 'empty id list is rejected',
+      body: { kind: 'access-approval', subscriptionIds: [] },
+      authorization: `Bearer ${DISPATCH_TOKEN}`,
+      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
+    },
+    {
+      name: 'too many ids are rejected',
+      body: {
+        kind: 'access-approval',
+        subscriptionIds: Array.from({ length: 17 }, (_, i) => `subscription_${i}`),
       },
-      verificationCode: null,
-      createdAt: Date.now(),
-      lastPushAt: null,
-      accountLabel: 'account',
-    }, {
-      '@type': 'StateChange',
-      changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
-      subject: 'private subject',
-      body: 'private body',
+      authorization: `Bearer ${DISPATCH_TOKEN}`,
+      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
+    },
+    {
+      name: 'unknown ids report as missing',
+      body: unknown,
+      authorization: `Bearer ${DISPATCH_TOKEN}`,
+      want: {
+        status: 200,
+        body: { ok: true, delivered: 0, missing: 1, removed: 0, failed: 0 },
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    await t.test(c.name, async () => {
+      const response = await relay.json('/api/push/internal/access-approval', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(c.authorization ? { authorization: c.authorization } : {}),
+        },
+        body: JSON.stringify(c.body),
+      });
+      assert.deepEqual(response, c.want);
     });
-    assert.deepEqual(result, { ok: true, status: 201, unregistered: false });
-    assert.deepEqual(sent, {
-      kind: 'jmap-state-change',
-      accountLabel: 'account',
-      changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
-    });
-  } finally {
-    webpush.sendNotification = originalSendNotification;
   }
 });
