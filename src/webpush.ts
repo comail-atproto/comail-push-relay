@@ -1,6 +1,7 @@
 import webpush from 'web-push';
+import type { RequestOptions } from 'web-push';
 import { logger } from './logger.js';
-import type { StateChange, WebSubscriptionRecord } from './types.js';
+import type { StateChange, WebPushSubscription, WebSubscriptionRecord } from './types.js';
 
 let configured = false;
 let publicKey: string | null = null;
@@ -37,28 +38,43 @@ export interface WebPushSendResult {
   unregistered: boolean;
 }
 
+// Tests record this boundary without contacting a push service.
+export interface WebPushTransport {
+  send(
+    subscription: WebPushSubscription,
+    payload: string,
+    options: RequestOptions,
+  ): Promise<{ statusCode: number }>;
+}
+
+const defaultTransport: WebPushTransport = {
+  send: (subscription, payload, options) => webpush.sendNotification(subscription, payload, options),
+};
+
 export async function sendWebPush(
   record: WebSubscriptionRecord,
   change: StateChange,
+  transport: WebPushTransport = defaultTransport,
 ): Promise<WebPushSendResult> {
   return sendWebPushPayload(record, {
     kind: 'jmap-state-change',
     accountLabel: record.accountLabel ?? '',
     changed: change.changed ?? {},
-  });
+  }, {}, transport);
 }
 
 export async function sendWebPushPayload(
   record: WebSubscriptionRecord,
   payload: Readonly<Record<string, unknown>>,
   options: { ttl?: number; topic?: string } = {},
+  transport: WebPushTransport = defaultTransport,
 ): Promise<WebPushSendResult> {
   if (!ensureConfigured()) {
     return { ok: false, status: 0, unregistered: false };
   }
 
   try {
-    const res = await webpush.sendNotification(record.webPush, JSON.stringify(payload), {
+    const res = await transport.send(record.webPush, JSON.stringify(payload), {
       TTL: options.ttl ?? 60 * 60,
       urgency: 'high',
       ...(options.topic ? { topic: options.topic } : {}),
