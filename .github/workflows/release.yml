@@ -77,7 +77,7 @@ jobs:
     name: Seed, deploy, or roll back push relay
     needs: build
     if: >-
-      always() && ((github.event_name == 'push' && needs.build.result == 'success' && vars.COMAIL_PUSH_DEPLOY_ENABLED == 'true') ||
+      always() && ((github.event_name == 'push' && needs.build.result == 'success' && vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
