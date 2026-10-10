@@ -24,6 +24,13 @@ release, name the normal previous-version redeploy path.
 Use GitHub stacks for dependent PRs in this repository. Describe dependencies on
 other repositories and any compatibility, deployment or rollback requirements.
 
+Changes must be safe to deploy in any order. Ship new behavior beside the old,
+switch over once both sides are released (usually with a flag), and remove the
+old path in a later release (expand/contract). Each service must keep working
+with the current and previous release of everything it talks to, including
+host configuration. Reviewers treat a required deploy order as a finding:
+restructure the change, or explain why the order cannot be avoided.
+
 For visual changes, attach before/after screenshots or recordings directly to
 the PR using synthetic data. Keep the PR draft if required attachments are
 unavailable. Never commit temporary review media; preserve existing review links.
