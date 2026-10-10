@@ -21,8 +21,11 @@ sensitive saved plans. -->
 
 ## Deployment impact
 
-<!-- Name the owning release workflow, affected services, compatible API rollout
-order, migrations, and verification.
+<!-- Name the owning release workflow, affected services, migrations, and
+verification. Confirm the change is safe to deploy in any order: new behavior
+ships beside the old (expand/contract), and each service keeps working with the
+previous release of everything it talks to. Explain any order that cannot be
+avoided.
 Include rollback steps and recovery checks for infrastructure or backend
 releases, or changes to persistent state, schemas, credentials, or API
 compatibility. Explain any effects a code revert cannot undo. For a simple
