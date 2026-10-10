@@ -23,5 +23,5 @@ only after that settings change. Keep human approval, signed commits, strict
 branch freshness, and the substantive build check required.
 
 After merge, verify a main-push build and its immutable release artifact. Leave
-`COMAIL_PUSH_DEPLOY_ENABLED` unchanged unless the separate host and credential
+`COMAIL_DEPLOY_PRODUCTION_ENABLED` unchanged unless the separate host and credential
 preflight is approved.

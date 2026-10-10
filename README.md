@@ -86,3 +86,13 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, signed commits, review
 native GitHub stacks, and PR attachments. [AI_POLICY.md](AI_POLICY.md) adopts
 AI Allowed; disclosure of AI use is optional. Report vulnerabilities through
 [SECURITY.md](SECURITY.md). Track work in GitHub and Linear; Chainlink is retired.
+
+## Automatic deployment controls
+
+Automatic production deployments require both the org variable
+`COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED` and this repository's
+`COMAIL_DEPLOY_PRODUCTION_ENABLED` to be `true`. Missing or other values block
+automatic deployment. Manual release and rollback keep their existing protected
+`main` workflow. See the [deployment controls and migration guide](https://github.com/comail-atproto/comail-infra/blob/main/docs/app-releases.md#deployment-controls).
+
+This workflow has no staging target; keep `COMAIL_DEPLOY_STAGING_ENABLED=false`.
