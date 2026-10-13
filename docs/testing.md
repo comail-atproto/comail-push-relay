@@ -7,8 +7,8 @@ and every test command builds first so tests run against current `src`.
 
 | Layer | Selection | Covers |
 | --- | --- | --- |
-| Unit | `npm run test:unit` | `test/ci-result.test.mjs`, `test/deployment-gates.test.mjs`, `test/transport.test.mjs` and `test/transport-unconfigured.test.mjs`. Covers release gates, `ci` result reporting and Web Push behavior. |
-| Component | `npm run test:component` | `test/startup-lifecycle.test.mjs`, `test/subscription-jmap.test.mjs`, `test/web-subscription.test.mjs`, `test/http.test.mjs` and `test/access-approval.test.mjs`. Runs the relay against temporary stores. |
+| Unit | `npm run test:unit` | Release gates, `ci` result reporting, transport outcomes and dispatch behavior. |
+| Component | `npm run test:component` | Relay startup, registration, JMAP, authorization and HTTP contracts with isolated temporary stores. |
 | All | `npm test` | Both selections, `node --test test/*.test.mjs`. |
 
 ## Prerequisites
