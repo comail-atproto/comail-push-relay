@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -38,4 +38,60 @@ test('concurrent initial writes retain every record', async (t) => {
     assert.deepEqual(await reopened.get(id), expected);
   }
   assert.equal(await reopened.get('hasOwnProperty'), null);
+});
+
+test('last push time controls expiry and cached expiry persists', async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-store-test-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const ttl = 90 * 24 * 60 * 60 * 1000;
+  let now = 2_000_000_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const id = 'subscription_recent_push';
+  const record = {
+    kind: 'fcm',
+    fcmToken: 'f'.repeat(64),
+    verificationCode: null,
+    createdAt: now - (2 * ttl),
+    lastPushAt: now - ttl,
+  };
+
+  await new FileSubscriptionStore(dataDir).put(id, record);
+  const cached = new FileSubscriptionStore(dataDir);
+  assert.deepEqual(await cached.get(id), record);
+
+  now += 1;
+  assert.equal(await cached.get(id), null);
+  const persisted = JSON.parse(await readFile(path.join(dataDir, 'subscriptions.json'), 'utf8'));
+  assert.equal(id in persisted.records, false);
+  assert.equal(await new FileSubscriptionStore(dataDir).get(id), null);
+});
+
+test('write failures retain the published file and recover the write queue', async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-store-test-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const store = new FileSubscriptionStore(dataDir);
+  const createdAt = Date.now();
+  const first = {
+    kind: 'fcm',
+    fcmToken: '1'.repeat(64),
+    verificationCode: null,
+    createdAt,
+    lastPushAt: null,
+  };
+  const second = { ...first, fcmToken: '2'.repeat(64) };
+  const third = { ...first, fcmToken: '3'.repeat(64) };
+  const target = path.join(dataDir, 'subscriptions.json');
+  const temporary = `${target}.tmp`;
+
+  await store.put('subscription_first', first);
+  const published = await readFile(target);
+  await mkdir(temporary);
+  await assert.rejects(store.put('subscription_second', second), { code: 'EISDIR' });
+  assert.deepEqual(await readFile(target), published);
+
+  await rm(temporary, { recursive: true });
+  await store.put('subscription_third', third);
+  const recovered = new FileSubscriptionStore(dataDir);
+  assert.deepEqual(await recovered.get('subscription_first'), first);
+  assert.deepEqual(await recovered.get('subscription_third'), third);
 });
