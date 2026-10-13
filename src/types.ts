@@ -1,6 +1,4 @@
-// Records exist in one of two flavours: FCM (mobile app) or Web Push (PWA in
-// the browser). Older on-disk records predate the discriminator and only have
-// `fcmToken` - the loader fills in `kind: 'fcm'` for those.
+// Older disk records with only fcmToken are loaded as kind: 'fcm'.
 export type SubscriptionRecord =
   | FcmSubscriptionRecord
   | WebSubscriptionRecord;

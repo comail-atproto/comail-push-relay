@@ -21,7 +21,15 @@ interface SubscriptionsFile {
   records: Record<string, SubscriptionRecord>;
 }
 
-class SubscriptionStore {
+export interface SubscriptionStore {
+  get(id: string): Promise<SubscriptionRecord | null>;
+  put(id: string, record: SubscriptionRecord): Promise<void>;
+  delete(id: string): Promise<void>;
+  size(): Promise<number>;
+  sizeByKind(): Promise<{ fcm: number; web: number }>;
+}
+
+class FileSubscriptionStore implements SubscriptionStore {
   private cache: Record<string, SubscriptionRecord> = {};
   private loaded = false;
   private writeQueue: Promise<void> = Promise.resolve();
@@ -103,8 +111,7 @@ class SubscriptionStore {
     }
   }
 
-  // Records written before the FCM/Web Push split only had `fcmToken`. Stamp
-  // them with `kind: 'fcm'` so the dispatcher in server.ts can branch on it.
+  // Older disk records lack a kind; treat them as FCM records.
   private migrateLegacyRecords(): void {
     for (const [id, record] of Object.entries(this.cache)) {
       const r = record as Partial<SubscriptionRecord> & { fcmToken?: string };
@@ -133,4 +140,4 @@ class SubscriptionStore {
   }
 }
 
-export const subscriptionStore = new SubscriptionStore();
+export const subscriptionStore = new FileSubscriptionStore();

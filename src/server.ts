@@ -4,28 +4,21 @@ import { URL } from 'node:url';
 import { applyCors, readJson, sendJson } from './http.js';
 import { logger } from './logger.js';
 import { subscriptionStore } from './store.js';
+import { createSubscriptionLifecycle } from './subscriptions.js';
 import { sendFcmPush } from './fcm.js';
 import { getVapidPublicKey, sendWebPush, sendWebPushPayload } from './webpush.js';
-import {
-  isValidFcmToken,
-  isValidSubscriptionId,
-  isValidWebPushSubscription,
-} from './validation.js';
+import { isValidSubscriptionId } from './validation.js';
 import type {
-  FcmSubscriptionRecord,
   JmapPushBody,
   SubscriptionRecord,
-  WebSubscriptionRecord,
 } from './types.js';
 import {
   registry,
   httpRequestsTotal,
   httpDurationSeconds,
-  subscriptionsRegistered,
-  subscriptionsUnregistered,
-  subscriptionsActive,
   pushesReceived,
   pushesForwarded,
+  subscriptionsUnregistered,
   fcmDurationSeconds,
   webPushDurationSeconds,
   accessApprovalPushes,
@@ -35,13 +28,6 @@ const PORT = Number(process.env.PORT ?? 3003);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const REPO_URL = 'https://github.com/bulwarkmail/relay';
 
-// How long after registration we still report a subscription as "active" even
-// though it has never forwarded a push. A freshly-created subscription hasn't
-// received a StateChange yet (the account may simply have no new mail during
-// setup), so without this grace a client racing setup on another device could
-// see the in-progress one as dead and reap it. 10 minutes comfortably covers
-// the JMAP verify window plus slack.
-const ACTIVE_GRACE_MS = 10 * 60 * 1000;
 const MAX_ACCESS_APPROVAL_SUBSCRIPTIONS = 16;
 
 const LANDING_HTML = `<!doctype html>
@@ -68,149 +54,10 @@ const LANDING_HTML = `<!doctype html>
 </html>
 `;
 
-async function handleRegister(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
-  const body = (await readJson(req)) as
-    | { subscriptionId?: unknown; fcmToken?: unknown; accountLabel?: unknown }
-    | null
-    | undefined;
-  if (!body || typeof body !== 'object') {
-    return sendJson(res, 400, { error: 'Invalid JSON' });
-  }
-  const { subscriptionId, fcmToken, accountLabel } = body;
-  if (!isValidSubscriptionId(subscriptionId)) {
-    return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-  }
-  if (!isValidFcmToken(fcmToken)) {
-    return sendJson(res, 400, { error: 'Invalid fcmToken' });
-  }
-
-  const existing = await subscriptionStore.get(subscriptionId);
-  const record: FcmSubscriptionRecord = {
-    kind: 'fcm',
-    fcmToken,
-    // Always start fresh: a stale verificationCode left over from a previous
-    // (now-expired) JMAP subscription would be returned by /verify polling
-    // before Stalwart's new PushVerification arrives, and the client would
-    // verify with the wrong code. Stalwart re-sends PushVerification on
-    // every fresh subscription, so dropping the old code is safe - the warm
-    // path (existing JMAP sub still alive) skips polling entirely.
-    verificationCode: null,
-    createdAt: existing?.createdAt ?? Date.now(),
-    lastPushAt: existing?.lastPushAt ?? null,
-    accountLabel:
-      typeof accountLabel === 'string' ? accountLabel.slice(0, 120) : undefined,
-  };
-  await subscriptionStore.put(subscriptionId, record);
-  subscriptionsRegistered.inc({ transport: 'fcm' });
-  await refreshActiveGauge();
-  return sendJson(res, 200, { ok: true });
-}
-
-async function handleRegisterWeb(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
-  // Refuse the registration up front if the operator hasn't configured VAPID
-  // keys - we'd accept the record but every push would fail.
-  if (!getVapidPublicKey()) {
-    return sendJson(res, 503, { error: 'Web Push not configured' });
-  }
-  const body = (await readJson(req)) as
-    | {
-        subscriptionId?: unknown;
-        subscription?: unknown;
-        accountLabel?: unknown;
-      }
-    | null
-    | undefined;
-  if (!body || typeof body !== 'object') {
-    return sendJson(res, 400, { error: 'Invalid JSON' });
-  }
-  const { subscriptionId, subscription, accountLabel } = body;
-  if (!isValidSubscriptionId(subscriptionId)) {
-    return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-  }
-  if (!isValidWebPushSubscription(subscription)) {
-    return sendJson(res, 400, { error: 'Invalid subscription' });
-  }
-
-  const existing = await subscriptionStore.get(subscriptionId);
-  const record: WebSubscriptionRecord = {
-    kind: 'web',
-    webPush: subscription,
-    // See handleRegister for why we always reset this.
-    verificationCode: null,
-    createdAt: existing?.createdAt ?? Date.now(),
-    lastPushAt: existing?.lastPushAt ?? null,
-    accountLabel:
-      typeof accountLabel === 'string' ? accountLabel.slice(0, 120) : undefined,
-  };
-  await subscriptionStore.put(subscriptionId, record);
-  subscriptionsRegistered.inc({ transport: 'web' });
-  await refreshActiveGauge();
-  return sendJson(res, 200, { ok: true });
-}
-
-async function handleUnregister(
-  id: string,
-  res: http.ServerResponse,
-): Promise<void> {
-  if (!isValidSubscriptionId(id)) {
-    return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-  }
-  // Look up the record before deleting so we can attribute the unregister to
-  // the right transport in metrics.
-  const existing = await subscriptionStore.get(id);
-  await subscriptionStore.delete(id);
-  subscriptionsUnregistered.inc({
-    reason: 'client',
-    transport: existing?.kind ?? 'unknown',
-  });
-  await refreshActiveGauge();
-  return sendJson(res, 200, { ok: true });
-}
-
-async function handleVerifyPoll(
-  id: string,
-  res: http.ServerResponse,
-): Promise<void> {
-  if (!isValidSubscriptionId(id)) {
-    return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-  }
-  const record = await subscriptionStore.get(id);
-  if (!record) {
-    return sendJson(res, 404, { error: 'Unknown subscription' });
-  }
-  return sendJson(res, 200, { verificationCode: record.verificationCode ?? null });
-}
-
-// Liveness probe used by clients during setup to decide whether a leftover JMAP
-// PushSubscription on the account belongs to a still-active device (keep it) or
-// is dead debris starving the new one's verification (safe to reap). Stalwart
-// hides a subscription's verified state and URL from clients, so the relay -
-// which sees the actual push traffic - is the only place that can tell them
-// apart. A verified, working subscription receives StateChange pushes and so
-// has a non-null lastPushAt; one that never verified never receives a push.
-// 404 (unknown id) deliberately means "not on this relay" so callers leave it
-// alone rather than reaping another relay's or a non-Bulwark client's record.
-async function handleActivePoll(
-  id: string,
-  res: http.ServerResponse,
-): Promise<void> {
-  if (!isValidSubscriptionId(id)) {
-    return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-  }
-  const record = await subscriptionStore.get(id);
-  if (!record) {
-    return sendJson(res, 404, { error: 'Unknown subscription' });
-  }
-  const active =
-    record.lastPushAt != null || Date.now() - record.createdAt < ACTIVE_GRACE_MS;
-  return sendJson(res, 200, { active });
-}
+const subscriptions = createSubscriptionLifecycle({
+  store: subscriptionStore,
+  getVapidPublicKey,
+});
 
 async function handleJmap(
   req: http.IncomingMessage,
@@ -256,7 +103,7 @@ async function handleJmap(
         reason: record.kind === 'fcm' ? 'fcm-unregistered' : 'webpush-gone',
         transport: record.kind,
       });
-      await refreshActiveGauge();
+      await subscriptions.refreshActiveGauge();
     }
     return sendJson(res, 200, { ok: result.ok });
   }
@@ -337,7 +184,7 @@ async function handleAccessApprovalDispatch(
       result.failed += 1;
     }
   }
-  await refreshActiveGauge();
+  await subscriptions.refreshActiveGauge();
   accessApprovalPushes.inc({
     result: result.failed > 0 ? 'partial_failure' : 'success',
   });
@@ -358,15 +205,6 @@ async function dispatchStateChange(
   const result = await sendWebPush(record, body);
   timer();
   return result;
-}
-
-// Refresh the active-subscriptions gauge by counting per-transport. Called
-// after every register/unregister and on every /metrics scrape so the gauge
-// stays consistent with the on-disk state.
-async function refreshActiveGauge(): Promise<void> {
-  const counts = await subscriptionStore.sizeByKind();
-  subscriptionsActive.set({ transport: 'fcm' }, counts.fcm);
-  subscriptionsActive.set({ transport: 'web' }, counts.web);
 }
 
 function normalizeRoute(method: string, path: string): string {
@@ -410,7 +248,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (method === 'GET' && path === '/metrics') {
-      await refreshActiveGauge();
+      await subscriptions.refreshActiveGauge();
       const body = await registry.metrics();
       res.writeHead(200, {
         'content-type': registry.contentType,
@@ -444,11 +282,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && path === '/api/push/register') {
-      return await handleRegister(req, res);
+      return await subscriptions.register(req, res);
     }
 
     if (method === 'POST' && path === '/api/push/register/web') {
-      return await handleRegisterWeb(req, res);
+      return await subscriptions.registerWeb(req, res);
     }
 
     if (method === 'GET' && path === '/api/push/vapid-public-key') {
@@ -468,17 +306,17 @@ const server = http.createServer(async (req, res) => {
 
     const registerIdMatch = path.match(/^\/api\/push\/register\/([^/]+)$/);
     if (method === 'DELETE' && registerIdMatch) {
-      return await handleUnregister(decodeURIComponent(registerIdMatch[1]), res);
+      return await subscriptions.unregister(decodeURIComponent(registerIdMatch[1]), res);
     }
 
     const verifyMatch = path.match(/^\/api\/push\/verify\/([^/]+)$/);
     if (method === 'GET' && verifyMatch) {
-      return await handleVerifyPoll(decodeURIComponent(verifyMatch[1]), res);
+      return await subscriptions.verificationCode(decodeURIComponent(verifyMatch[1]), res);
     }
 
     const activeMatch = path.match(/^\/api\/push\/active\/([^/]+)$/);
     if (method === 'GET' && activeMatch) {
-      return await handleActivePoll(decodeURIComponent(activeMatch[1]), res);
+      return await subscriptions.active(decodeURIComponent(activeMatch[1]), res);
     }
 
     const jmapMatch = path.match(/^\/api\/push\/jmap\/([^/]+)$/);
