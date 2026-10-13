@@ -7,8 +7,8 @@ and every test command builds first so tests run against current `src`.
 
 | Layer | Selection | Covers |
 | --- | --- | --- |
-| Unit | `npm run test:unit` | Web Push transport/error matrix against an injected recording transport; the required `ci` result-check policy. In-process, no credentials. |
-| Component | `npm run test:component` | The real relay process against a temporary store: readiness, subscription lifecycle, registration validation, access-approval authorization. |
+| Unit | `npm run test:unit` | `test/ci-result.test.mjs`, `test/deployment-gates.test.mjs`, `test/transport.test.mjs` and `test/transport-unconfigured.test.mjs`. Covers release gates, `ci` result reporting and Web Push behavior. |
+| Component | `npm run test:component` | `test/startup-lifecycle.test.mjs`, `test/subscription-jmap.test.mjs`, `test/web-subscription.test.mjs`, `test/http.test.mjs` and `test/access-approval.test.mjs`. Runs the relay against temporary stores. |
 | All | `npm test` | Both selections, `node --test test/*.test.mjs`. |
 
 ## Prerequisites
@@ -22,15 +22,14 @@ Node >= 20.
 
 ## Determinism
 
-- The component helper starts the server with `PORT=0` and waits for the bound
-  listen address the server logs, so no port is reserved and released and no
-  fixture port reservation race occurs.
-- Each case owns a fresh temporary `PUSH_DATA_DIR`; the helper deletes only
+- The component helper starts the server with `PORT=0` and waits for its logged
+  listen address.
+- Each relay gets a fresh temporary `PUSH_DATA_DIR`; the helper deletes only
   directories it created.
 - The helper strips inherited `VAPID_*`, `FCM_SERVICE_ACCOUNT_JSON` and
   `ACCESS_APPROVAL_DISPATCH_TOKEN`; it also clears inherited release identity
   and data directory settings. Cases opt into synthetic configuration explicitly.
-- Health probes are bounded with `AbortSignal.timeout`.
+- Health probes and oversized-body requests have bounded timeouts.
 - VAPID configuration is read once per module instance. The absent-key case
   therefore lives in `test/transport-unconfigured.test.mjs`, which the runner
   isolates in its own process, rather than mutating a configured module.

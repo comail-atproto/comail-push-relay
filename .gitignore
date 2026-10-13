@@ -5,6 +5,5 @@ dist
 *.log
 service-account*.json
 
-# Local review captures and retired tracker state.
+# Local review captures.
 review-evidence/
-.chainlink/

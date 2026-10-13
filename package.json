@@ -9,8 +9,8 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test test/*.test.mjs",
-    "test:unit": "npm run build && node --test test/ci-result.test.mjs test/transport.test.mjs test/transport-unconfigured.test.mjs",
-    "test:component": "npm run build && node --test test/server.test.mjs",
+    "test:unit": "npm run build && node --test test/ci-result.test.mjs test/deployment-gates.test.mjs test/transport.test.mjs test/transport-unconfigured.test.mjs",
+    "test:component": "npm run build && node --test test/startup-lifecycle.test.mjs test/subscription-jmap.test.mjs test/web-subscription.test.mjs test/http.test.mjs test/access-approval.test.mjs",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts"
   },

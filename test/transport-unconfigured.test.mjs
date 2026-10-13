@@ -1,6 +1,4 @@
-// The relay reads VAPID config once per module instance, so the absent-key case
-// needs its own process with no keys set. The Node test runner isolates files,
-// giving this module a fresh configuration state.
+// Node isolates this file in a process with no VAPID keys.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';

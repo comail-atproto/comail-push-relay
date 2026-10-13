@@ -1,10 +1,7 @@
-// Relay process fixture. Each call owns a fresh temp store and child process,
-// waits for the server to report its bound port, then probes /api/health. A
-// child that errors, exits early, or never becomes ready fails with its exit
-// code and a bounded stdout/stderr tail.
+// Child fixture with bounded readiness probes and captured failure diagnostics.
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,7 +11,7 @@ const HEALTH_TIMEOUT_MS = 2_000;
 const CAPTURE_LIMIT = 16 * 1024;
 const DIAGNOSTIC_TAIL = 4 * 1024;
 
-// Inherited credentials would change relay behavior; cases opt in explicitly.
+// Child cases opt in to credentials explicitly.
 const SANITIZED_ENV = [
   'VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
@@ -169,17 +166,25 @@ function spawnRelay(options) {
   return session;
 }
 
-// startRelay creates a fresh temp store, spawns the relay and waits for
-// readiness. On failure it tears everything down before re-throwing.
+// Remove only stores created by this helper, including startup failures.
 export async function startRelay(options = {}) {
   const owned = options.dataDir === undefined;
   const dataDir = options.dataDir
     ?? await mkdtemp(path.join(os.tmpdir(), 'push-relay-test-'));
-  const session = spawnRelay({ ...options, dataDir, deleteDataDir: owned });
+  let session;
   try {
+    if (options.initialRecords) {
+      await mkdir(dataDir, { recursive: true });
+      await writeFile(
+        path.join(dataDir, 'subscriptions.json'),
+        JSON.stringify({ records: options.initialRecords }),
+      );
+    }
+    session = spawnRelay({ ...options, dataDir, deleteDataDir: owned });
     return await session.waitForReady(options.readyTimeoutMs);
   } catch (error) {
-    await session.stop();
+    if (session) await session.stop();
+    else if (owned) await rm(dataDir, { recursive: true, force: true });
     throw error;
   }
 }
