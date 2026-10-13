@@ -21,6 +21,11 @@ interface SubscriptionsFile {
   records: Record<string, SubscriptionRecord>;
 }
 
+function createRecords(records: Record<string, SubscriptionRecord> = {}): Record<string, SubscriptionRecord> {
+  // Subscription IDs may match inherited object names.
+  return Object.assign(Object.create(null), records);
+}
+
 export interface SubscriptionStore {
   get(id: string): Promise<SubscriptionRecord | null>;
   put(id: string, record: SubscriptionRecord): Promise<void>;
@@ -30,7 +35,7 @@ export interface SubscriptionStore {
 }
 
 export class FileSubscriptionStore implements SubscriptionStore {
-  private cache: Record<string, SubscriptionRecord> = {};
+  private cache: Record<string, SubscriptionRecord> = createRecords();
   private loaded = false;
   private pendingLoad: Promise<void> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
@@ -41,17 +46,17 @@ export class FileSubscriptionStore implements SubscriptionStore {
     try {
       const raw = await readFile(subscriptionsPath(this.dataDir), 'utf-8');
       const parsed = JSON.parse(raw) as SubscriptionsFile;
-      this.cache = parsed.records ?? {};
+      this.cache = createRecords(parsed.records ?? {});
       this.migrateLegacyRecords();
       this.evictExpired();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.cache = {};
+        this.cache = createRecords();
       } else {
         logger.warn('store: failed to read subscriptions', {
           error: error instanceof Error ? error.message : 'Unknown error',
         });
-        this.cache = {};
+        this.cache = createRecords();
       }
     }
     this.loaded = true;

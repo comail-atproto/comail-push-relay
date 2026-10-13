@@ -11,8 +11,14 @@ test('concurrent initial writes retain every record', async (t) => {
   t.after(() => rm(dataDir, { recursive: true, force: true }));
   const store = new FileSubscriptionStore(dataDir);
   const createdAt = Date.now();
-  const records = Array.from({ length: 20 }, (_, index) => [
-    `subscription_${index}`,
+  const ids = [
+    ...Array.from({ length: 20 }, (_, index) => `subscription_${index}`),
+    '__proto__',
+    'constructor',
+    'toString',
+  ];
+  const records = ids.map((id, index) => [
+    id,
     {
       kind: 'fcm',
       fcmToken: String(index).padStart(64, 'f'),
@@ -24,10 +30,12 @@ test('concurrent initial writes retain every record', async (t) => {
 
   await Promise.all(records.map(([id, record]) => store.put(id, record)));
   assert.equal(await store.size(), records.length);
+  assert.equal(await store.get('hasOwnProperty'), null);
 
   const reopened = new FileSubscriptionStore(dataDir);
   assert.equal(await reopened.size(), records.length);
   for (const [id, expected] of records) {
     assert.deepEqual(await reopened.get(id), expected);
   }
+  assert.equal(await reopened.get('hasOwnProperty'), null);
 });
