@@ -22,23 +22,39 @@ const change = {
 let moduleInstance = 0;
 
 test('FCM sends an authenticated opaque payload and reuses its OAuth token', async (t) => {
+  const mintedAt = 1_700_000_000_000;
+  let now = mintedAt;
+  t.mock.method(Date, 'now', () => now);
+  const refreshAt = mintedAt + 3_540_000;
   const requests = [];
   const sendFcmPush = await fcm(t, async (url, init) => {
     requests.push({ url, init });
-    if (url === tokenUri) return json({ access_token: 'cached-token', expires_in: 3600 });
+    if (url === tokenUri) {
+      const count = requests.filter((request) => request.url === tokenUri).length;
+      return json({ access_token: `cached-token-${count}`, expires_in: 3600 });
+    }
     return json({ name: 'projects/test-project/messages/1' });
   });
 
   const first = await sendFcmPush(fcmRecord, change);
-  const second = await sendFcmPush(fcmRecord, change);
+  now = refreshAt - 1;
+  const reused = await sendFcmPush(fcmRecord, change);
+  now = refreshAt;
+  const refreshed = await sendFcmPush(fcmRecord, change);
 
   assert.deepEqual(first, { ok: true, status: 200, unregistered: false, body: { name: 'projects/test-project/messages/1' } });
-  assert.deepEqual(second, first);
-  assert.equal(requests.length, 3);
-  assertOAuthRequest(requests[0]);
-  for (const { url, init } of requests.slice(1)) {
+  assert.deepEqual(reused, first);
+  assert.deepEqual(refreshed, first);
+  assert.equal(requests.length, 5);
+  assertOAuthRequest(requests[0], mintedAt / 1000);
+  assertOAuthRequest(requests[3], refreshAt / 1000);
+  const pushRequests = requests.filter(({ url }) => url !== tokenUri);
+  assert.equal(pushRequests.length, 3);
+  for (const [index, { url, init }] of pushRequests.entries()) {
     assert.equal(url, 'https://fcm.googleapis.com/v1/projects/test-project/messages:send');
-    assert.equal(init.headers.authorization, 'Bearer cached-token');
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers['content-type'], 'application/json');
+    assert.equal(init.headers.authorization, `Bearer cached-token-${index < 2 ? 1 : 2}`);
     assert.deepEqual(JSON.parse(init.body), {
       message: {
         token: fcmRecord.fcmToken,
@@ -102,7 +118,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function assertOAuthRequest({ url, init }) {
+function assertOAuthRequest({ url, init }, expectedIat) {
   assert.equal(url, tokenUri);
   assert.equal(init.method, 'POST');
   assert.equal(init.headers['content-type'], 'application/x-www-form-urlencoded');
@@ -114,6 +130,7 @@ function assertOAuthRequest({ url, init }) {
   assert.deepEqual(JSON.parse(Buffer.from(header, 'base64url')), { alg: 'RS256', typ: 'JWT', kid: 'test-key' });
   const claim = JSON.parse(Buffer.from(payload, 'base64url'));
   assert.equal(claim.iss, 'relay@example.test');
+  assert.equal(claim.iat, expectedIat);
   assert.equal(claim.scope, 'https://www.googleapis.com/auth/firebase.messaging');
   assert.equal(claim.aud, tokenUri);
   assert.equal(claim.exp, claim.iat + 3600);

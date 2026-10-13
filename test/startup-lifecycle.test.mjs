@@ -21,7 +21,7 @@ test('startup failures report child errors and remove their temporary stores', {
     await assert.rejects(startRelay({ env: { PORT: 'not-a-port' } }), /options\.port should be/);
   });
   await t.test('spawn failure reports ENOENT', async () => {
-    await assert.rejects(startRelay({ cwd: '/comail-test-missing-directory' }), /ENOENT/);
+    await assert.rejects(startRelay({ cwd: path.join(tempRoot, 'missing') }), /ENOENT/);
   });
   assert.deepEqual(await readdir(tempRoot), []);
 });

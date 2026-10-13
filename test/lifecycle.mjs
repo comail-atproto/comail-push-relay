@@ -31,8 +31,8 @@ function spawnRelay(options) {
   Object.assign(env, {
     HOST: '127.0.0.1',
     PORT: '0',
-    PUSH_DATA_DIR: options.dataDir,
     ...options.env,
+    PUSH_DATA_DIR: options.dataDir,
   });
 
   const child = spawn(process.execPath, ['dist/server.js'], {

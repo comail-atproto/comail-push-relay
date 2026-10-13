@@ -1,17 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import webpush from 'web-push';
 
 import { deliverAccessApproval } from '../dist/delivery.js';
 import { record, startTestRelay } from './handler-fixtures.mjs';
+import { WEB_PUSH_ENV } from './web-push-fixture.mjs';
 
 const TOKEN = 'a'.repeat(40);
 
+function webPushRecord(accountLabel, status) {
+  const subscription = record('web', { accountLabel });
+  subscription.webPush.endpoint += `/${status}`;
+  return subscription;
+}
+
 test('access-approval reports mixed outcomes once per ID and updates only successful records', async (t) => {
-  const previousToken = process.env.ACCESS_APPROVAL_DISPATCH_TOKEN;
-  process.env.ACCESS_APPROVAL_DISPATCH_TOKEN = TOKEN;
+  const env = { ACCESS_APPROVAL_DISPATCH_TOKEN: TOKEN, ...WEB_PUSH_ENV };
+  const previousEnv = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, env);
   t.after(() => {
-    if (previousToken === undefined) delete process.env.ACCESS_APPROVAL_DISPATCH_TOKEN;
-    else process.env.ACCESS_APPROVAL_DISPATCH_TOKEN = previousToken;
+    for (const [name, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   const ids = {
@@ -21,10 +32,10 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     failed: 'subscription_failed_1',
     missing: 'subscription_missing_1',
   };
-  const deliveredRecord = record('web', { accountLabel: 'delivered' });
+  const deliveredRecord = webPushRecord('delivered', 201);
   const fcmRecord = record('fcm', { accountLabel: 'fcm' });
-  const removedRecord = record('web', { accountLabel: 'removed' });
-  const failedRecord = record('web', { accountLabel: 'failed' });
+  const removedRecord = webPushRecord('removed', 410);
+  const failedRecord = webPushRecord('failed', 503);
   const records = new Map([
     [ids.delivered, deliveredRecord],
     [ids.fcm, fcmRecord],
@@ -32,22 +43,24 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     [ids.failed, failedRecord],
   ]);
   const sent = [];
+  t.mock.method(webpush, 'sendNotification', async (subscription, payload, options) => {
+    sent.push({ subscription: structuredClone(subscription), payload, options });
+    if (subscription.endpoint.endsWith('/410')) {
+      throw Object.assign(new Error('gone'), { statusCode: 410 });
+    }
+    if (subscription.endpoint.endsWith('/503')) {
+      throw Object.assign(new Error('unavailable'), { statusCode: 503 });
+    }
+    return { statusCode: 201 };
+  });
   const relay = await startTestRelay({
     records,
-    async deliverAccessApproval(webRecord) {
-      return deliverAccessApproval(webRecord, {
-        async send(subscription, payload, options) {
-          sent.push({ subscription: structuredClone(subscription), payload, options });
-          if (subscription.accountLabel === 'removed') return { ok: false, status: 410, unregistered: true };
-          if (subscription.accountLabel === 'failed') return { ok: false, status: 503, unregistered: false };
-          return { ok: true, status: 201, unregistered: false };
-        },
-      });
-    },
+    deliverAccessApproval,
   });
   t.after(() => relay.close());
 
-  const started = Date.now();
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now);
   const response = await relay.post('/api/push/internal/access-approval', {
     kind: 'access-approval',
     subscriptionIds: [
@@ -60,7 +73,6 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
       ids.failed,
     ],
   }, `Bearer ${TOKEN}`);
-  const finished = Date.now();
 
   assert.deepEqual(response, {
     status: 200,
@@ -73,17 +85,14 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     },
   });
   assert.deepEqual(sent.map(({ subscription }) => subscription), [
-    deliveredRecord, removedRecord, failedRecord,
+    deliveredRecord.webPush, removedRecord.webPush, failedRecord.webPush,
   ]);
   for (const { payload, options } of sent) {
-    assert.deepEqual({ payload, options }, {
-      payload: { kind: 'access-approval' },
-      options: { ttl: 120, topic: 'comail-access-approval' },
-    });
+    assert.deepEqual(JSON.parse(payload), { kind: 'access-approval' });
+    assert.deepEqual(options, { TTL: 120, urgency: 'high', topic: 'comail-access-approval' });
   }
   const stored = await relay.readRecords();
-  const { lastPushAt } = stored[ids.delivered];
-  assert.ok(lastPushAt >= started && lastPushAt <= finished);
+  assert.equal(stored[ids.delivered].lastPushAt, now);
   assert.equal(ids.removed in stored, false);
   for (const id of [ids.fcm, ids.failed]) {
     assert.equal(stored[id].lastPushAt, records.get(id).lastPushAt);

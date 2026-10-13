@@ -57,11 +57,25 @@ test('HTTP contracts for public routes, CORS, malformed IDs, and body limits', a
     }
   });
 
-  await t.test('oversized request bodies close the connection', { timeout: 3000 }, async () => {
+  await t.test('request bodies accept the limit and close over-limit connections', { timeout: 3000 }, async () => {
+    const limit = 64 * 1024;
+    const json = JSON.stringify({
+      subscriptionId: 'subscription_body_limit',
+      fcmToken: 'f'.repeat(64),
+      accountLabel: 'é'.repeat(32_000),
+    });
+    const body = json + ' '.repeat(limit - Buffer.byteLength(json));
+    const init = { method: 'POST', headers: { 'content-type': 'application/json' } };
+    assert.equal(Buffer.byteLength(body), limit);
+    assert.ok(body.length < limit);
+    assert.deepEqual(await relay.json('/api/push/register', { ...init, body }), {
+      status: 200,
+      body: { ok: true },
+    });
+
     await assert.rejects(relay.request('/api/push/register', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: 'x'.repeat(64 * 1024 + 1),
+      ...init,
+      body: `${body} `,
       signal: AbortSignal.timeout(2000),
     }), (error) => {
       assert.equal(error.cause?.code, 'UND_ERR_SOCKET');

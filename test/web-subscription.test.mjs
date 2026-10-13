@@ -17,6 +17,10 @@ const verification = (code) => ({
 });
 
 test('registration, StateChange, refresh, transport switches, and delete persist together', async (t) => {
+  const createdAt = 1_700_000_000_000;
+  const activeGraceMs = 10 * 60 * 1000;
+  let now = createdAt;
+  t.mock.method(Date, 'now', () => now);
   const deliveries = [];
   const relay = await startTestRelay({
     getVapidPublicKey: () => WEB_PUSH_PUBLIC_KEY,
@@ -40,12 +44,20 @@ test('registration, StateChange, refresh, transport switches, and delete persist
   }), ok);
   const original = await read();
   assert.equal(original.accountLabel, 'f'.repeat(120));
+  assert.equal(original.createdAt, createdAt);
   assert.deepEqual(await relay.post(`/api/push/jmap/${ID}`, verification('123456')), ok);
+  now = createdAt + activeGraceMs - 1;
+  assert.deepEqual(await relay.json(`/api/push/active/${ID}`), { status: 200, body: { active: true } });
+  now += 1;
+  assert.deepEqual(await relay.json(`/api/push/active/${ID}`), { status: 200, body: { active: false } });
+  now += 1;
+  const pushedAt = now;
   assert.deepEqual(await relay.post(`/api/push/jmap/${ID}`, stateChange), { status: 200, body: { ok: true } });
   assert.deepEqual(deliveries, [{ kind: 'fcm', change: stateChange }]);
   const pushed = await read();
   assert.equal(pushed.verificationCode, '123456');
-  assert.ok(Number.isFinite(pushed.lastPushAt));
+  assert.equal(pushed.lastPushAt, pushedAt);
+  assert.deepEqual(await relay.json(`/api/push/active/${ID}`), { status: 200, body: { active: true } });
 
   const transitions = [
     {
