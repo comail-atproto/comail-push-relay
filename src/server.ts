@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
+import { applyCors, readJson, sendJson } from './http.js';
 import { logger } from './logger.js';
 import { subscriptionStore } from './store.js';
 import { sendFcmPush } from './fcm.js';
@@ -32,7 +33,6 @@ import {
 
 const PORT = Number(process.env.PORT ?? 3003);
 const HOST = process.env.HOST ?? '0.0.0.0';
-const MAX_BODY_BYTES = 64 * 1024;
 const REPO_URL = 'https://github.com/bulwarkmail/relay';
 
 // How long after registration we still report a subscription as "active" even
@@ -67,62 +67,6 @@ const LANDING_HTML = `<!doctype html>
 </body>
 </html>
 `;
-
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    req.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
-        reject(new Error('Payload too large'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (chunks.length === 0) {
-        resolve(null);
-        return;
-      }
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch {
-        resolve(undefined);
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-// The relay is meant to be reachable from any Bulwark deployment's browser
-// frontend, so we serve permissive CORS. There are no cookies or credentials
-// in any request, so `*` here is safe - opaque subscription ids and FCM
-// tokens are the only secrets and clients post them as request bodies.
-const CORS_HEADERS: Record<string, string> = {
-  'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-  'access-control-allow-headers': 'content-type',
-  'access-control-max-age': '86400',
-};
-
-function applyCors(req: http.IncomingMessage, res: http.ServerResponse): void {
-  if (!req.headers.origin) return;
-  for (const [k, v] of Object.entries(CORS_HEADERS)) {
-    res.setHeader(k, v);
-  }
-}
-
-function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(payload),
-    'cache-control': 'no-store',
-  });
-  res.end(payload);
-}
 
 async function handleRegister(
   req: http.IncomingMessage,
