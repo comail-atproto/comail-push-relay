@@ -13,13 +13,12 @@ import {
   isValidWebPushSubscription,
 } from './validation.js';
 
-// New subscriptions remain active while waiting for their first StateChange.
+// Fresh subscriptions get grace while awaiting their first StateChange.
 const ACTIVE_GRACE_MS = 10 * 60 * 1000;
 
 interface SubscriptionLifecycleDependencies {
   store: SubscriptionStore;
   getVapidPublicKey: () => string | null;
-  now?: () => number;
 }
 
 export interface SubscriptionLifecycle {
@@ -34,7 +33,6 @@ export interface SubscriptionLifecycle {
 export function createSubscriptionLifecycle({
   store,
   getVapidPublicKey,
-  now = Date.now,
 }: SubscriptionLifecycleDependencies): SubscriptionLifecycle {
   async function refreshActiveGauge(): Promise<void> {
     const counts = await store.sizeByKind();
@@ -58,15 +56,10 @@ export function createSubscriptionLifecycle({
       return sendJson(res, 400, { error: 'Invalid fcmToken' });
     }
 
-    const existing = await store.get(subscriptionId);
     const record: FcmSubscriptionRecord = {
       kind: 'fcm',
       fcmToken,
-      // A new JMAP registration must not reuse an old verification code.
-      verificationCode: null,
-      createdAt: existing?.createdAt ?? now(),
-      lastPushAt: existing?.lastPushAt ?? null,
-      accountLabel: accountLabelValue(accountLabel),
+      ...(await registrationMetadata(store, subscriptionId, accountLabel)),
     };
     await store.put(subscriptionId, record);
     subscriptionsRegistered.inc({ transport: 'fcm' });
@@ -93,15 +86,10 @@ export function createSubscriptionLifecycle({
       return sendJson(res, 400, { error: 'Invalid subscription' });
     }
 
-    const existing = await store.get(subscriptionId);
     const record: WebSubscriptionRecord = {
       kind: 'web',
       webPush: subscription,
-      // A new JMAP registration must not reuse an old verification code.
-      verificationCode: null,
-      createdAt: existing?.createdAt ?? now(),
-      lastPushAt: existing?.lastPushAt ?? null,
-      accountLabel: accountLabelValue(accountLabel),
+      ...(await registrationMetadata(store, subscriptionId, accountLabel)),
     };
     await store.put(subscriptionId, record);
     subscriptionsRegistered.inc({ transport: 'web' });
@@ -129,7 +117,6 @@ export function createSubscriptionLifecycle({
     }
     const record = await store.get(id);
     if (!record) {
-      // Unknown IDs may belong to another relay and must not be reaped.
       return sendJson(res, 404, { error: 'Unknown subscription' });
     }
     return sendJson(res, 200, { verificationCode: record.verificationCode ?? null });
@@ -141,9 +128,10 @@ export function createSubscriptionLifecycle({
     }
     const record = await store.get(id);
     if (!record) {
+      // Unknown IDs may belong to another relay and must not be reaped.
       return sendJson(res, 404, { error: 'Unknown subscription' });
     }
-    const isActive = record.lastPushAt != null || now() - record.createdAt < ACTIVE_GRACE_MS;
+    const isActive = record.lastPushAt != null || Date.now() - record.createdAt < ACTIVE_GRACE_MS;
     return sendJson(res, 200, { active: isActive });
   }
 
@@ -164,4 +152,26 @@ interface WebRegistrationBody {
 
 function accountLabelValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value.slice(0, 120) : undefined;
+}
+
+async function registrationMetadata(
+  store: SubscriptionStore,
+  subscriptionId: string,
+  accountLabel: unknown,
+): Promise<RegistrationMetadata> {
+  const existing = await store.get(subscriptionId);
+  // A new JMAP registration must not reuse an old verification code.
+  return {
+    verificationCode: null,
+    createdAt: existing?.createdAt ?? Date.now(),
+    lastPushAt: existing?.lastPushAt ?? null,
+    accountLabel: accountLabelValue(accountLabel),
+  };
+}
+
+interface RegistrationMetadata {
+  verificationCode: null;
+  createdAt: number;
+  lastPushAt: number | null;
+  accountLabel?: string;
 }
