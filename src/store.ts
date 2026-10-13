@@ -32,6 +32,7 @@ export interface SubscriptionStore {
 export class FileSubscriptionStore implements SubscriptionStore {
   private cache: Record<string, SubscriptionRecord> = {};
   private loaded = false;
+  private pendingLoad: Promise<void> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly dataDir?: string) {}
@@ -57,7 +58,11 @@ export class FileSubscriptionStore implements SubscriptionStore {
   }
 
   async ensureLoaded(): Promise<void> {
-    if (!this.loaded) await this.load();
+    if (this.loaded) return;
+    if (!this.pendingLoad) {
+      this.pendingLoad = this.load().finally(() => { this.pendingLoad = null; });
+    }
+    await this.pendingLoad;
   }
 
   async get(id: string): Promise<SubscriptionRecord | null> {
