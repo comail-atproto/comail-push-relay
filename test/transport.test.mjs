@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import webpush from 'web-push';
+import { record } from './handler-fixtures.mjs';
 
 // VAPID config is read once per module instance; the absent-key case has its
 // own runner process in transport-unconfigured.test.mjs.
@@ -20,21 +21,6 @@ function recordingTransport(outcome) {
       if (outcome instanceof Error) throw outcome;
       return { statusCode: outcome };
     },
-  };
-}
-
-function webRecord(overrides = {}) {
-  return {
-    kind: 'web',
-    webPush: {
-      endpoint: 'https://push.example.com/message',
-      keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
-    },
-    verificationCode: null,
-    createdAt: Date.now(),
-    lastPushAt: null,
-    accountLabel: 'account',
-    ...overrides,
   };
 }
 
@@ -66,9 +52,9 @@ test('web push transport result matrix', async (t) => {
   for (const c of cases) {
     await t.test(c.name, async () => {
       const transport = recordingTransport(c.outcome);
-      const result = await sendWebPush(webRecord(), change, transport);
+      const result = await sendWebPush(record('web', { accountLabel: 'account' }), change, transport);
       assert.deepEqual(result, c.want);
-      assert.equal(transport.sent.length, 1, 'transport should be invoked exactly once');
+      assert.equal(transport.sent.length, 1);
     });
   }
 });
@@ -76,7 +62,7 @@ test('web push transport result matrix', async (t) => {
 test('web push StateChange payload carries opaque state references only', async () => {
   const { sendWebPush } = await import('../dist/webpush.js');
   const transport = recordingTransport(201);
-  const result = await sendWebPush(webRecord(), {
+  const result = await sendWebPush(record('web', { accountLabel: 'account' }), {
     '@type': 'StateChange',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
     // Fields the relay must never forward, even if a producer adds them.

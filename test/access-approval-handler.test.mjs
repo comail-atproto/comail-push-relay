@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createAccessApprovalHandler } from '../dist/access-approval.js';
-import { fakeStore, jsonBody, record, request, response } from './handler-fixtures.mjs';
+import { deliverAccessApproval } from '../dist/delivery.js';
+import { jsonBody, memoryStore, record, request, response } from './handler-fixtures.mjs';
 
 const TOKEN = 'a'.repeat(40);
 
@@ -21,32 +22,37 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     failed: 'subscription_failed_1',
     missing: 'subscription_missing_1',
   };
+  const deliveredRecord = record('web', { accountLabel: 'delivered' });
+  const fcmRecord = record('fcm', { accountLabel: 'fcm' });
+  const removedRecord = record('web', { accountLabel: 'removed' });
+  const failedRecord = record('web', { accountLabel: 'failed' });
   const records = new Map([
-    [ids.delivered, record('web')],
-    [ids.fcm, record('fcm')],
-    [ids.removed, record('web')],
-    [ids.failed, record('web')],
+    [ids.delivered, deliveredRecord],
+    [ids.fcm, fcmRecord],
+    [ids.removed, removedRecord],
+    [ids.failed, failedRecord],
   ]);
-  const store = fakeStore(records);
-  const delivered = [];
+  const store = memoryStore(records);
+  const sent = [];
   let refreshes = 0;
   const handler = createAccessApprovalHandler({
     store,
     async deliver(webRecord) {
-      delivered.push(webRecord);
-      if (webRecord === records.get(ids.removed)) {
-        return { ok: false, status: 410, unregistered: true };
-      }
-      if (webRecord === records.get(ids.failed)) {
-        return { ok: false, status: 503, unregistered: false };
-      }
-      return { ok: true, status: 201, unregistered: false };
+      return deliverAccessApproval(webRecord, {
+        async send(subscription, payload, options) {
+          sent.push({ subscription: structuredClone(subscription), payload, options });
+          if (subscription.accountLabel === 'removed') return { ok: false, status: 410, unregistered: true };
+          if (subscription.accountLabel === 'failed') return { ok: false, status: 503, unregistered: false };
+          return { ok: true, status: 201, unregistered: false };
+        },
+      });
     },
     async refreshActiveGauge() { refreshes++; },
   });
   const res = response();
   const originalTimestamps = new Map([...records].map(([id, value]) => [id, value.lastPushAt]));
 
+  const started = Date.now();
   await handler(request({
     kind: 'access-approval',
     subscriptionIds: [
@@ -59,6 +65,7 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
       ids.failed,
     ],
   }, { headers: { authorization: `Bearer ${TOKEN}` } }), res);
+  const finished = Date.now();
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(jsonBody(res), {
@@ -68,17 +75,19 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     removed: 1,
     failed: 1,
   });
-  assert.deepEqual(store.calls.gets, [
-    ids.delivered, ids.missing, ids.fcm, ids.removed, ids.failed,
+  assert.deepEqual(sent.map(({ subscription }) => subscription), [
+    deliveredRecord, removedRecord, failedRecord,
   ]);
-  assert.deepEqual(delivered, [
-    records.get(ids.delivered), records.get(ids.removed), records.get(ids.failed),
+  assert.deepEqual(sent.map(({ payload, options }) => ({ payload, options })), [
+    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
+    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
+    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
   ]);
-  assert.deepEqual(store.calls.puts.map(({ id: putId }) => putId), [ids.delivered]);
-  assert.ok(records.get(ids.delivered).lastPushAt > 0);
-  for (const id of [ids.fcm, ids.removed, ids.failed]) {
+  const { lastPushAt } = store.records.get(ids.delivered);
+  assert.ok(lastPushAt >= started && lastPushAt <= finished);
+  assert.equal(store.records.has(ids.removed), false);
+  for (const id of [ids.fcm, ids.failed]) {
     assert.equal(records.get(id).lastPushAt, originalTimestamps.get(id));
   }
-  assert.deepEqual(store.calls.deletes, [ids.removed]);
   assert.equal(refreshes, 1);
 });

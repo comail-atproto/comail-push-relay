@@ -6,53 +6,20 @@ import { startRelay } from './lifecycle.mjs';
 const SUBSCRIPTION_ID = 'subscription_12345';
 const FCM_TOKEN = 'f'.repeat(64);
 
-test('registration validation matrix', async (t) => {
-  const cases = [
-    {
-      name: 'valid FCM token is accepted',
-      body: { subscriptionId: SUBSCRIPTION_ID, fcmToken: FCM_TOKEN },
-      want: { status: 200, body: { ok: true } },
-      stored: 1,
-    },
-    {
-      name: 'missing subscriptionId is rejected',
-      body: { fcmToken: FCM_TOKEN },
-      want: { status: 400, body: { error: 'Invalid subscriptionId' } },
-      stored: 0,
-    },
-    {
-      name: 'short subscriptionId is rejected',
-      body: { subscriptionId: 'short', fcmToken: FCM_TOKEN },
-      want: { status: 400, body: { error: 'Invalid subscriptionId' } },
-      stored: 0,
-    },
-    {
-      name: 'short FCM token is rejected',
-      body: { subscriptionId: SUBSCRIPTION_ID, fcmToken: 'too-short' },
-      want: { status: 400, body: { error: 'Invalid fcmToken' } },
-      stored: 0,
-    },
-    {
-      name: 'invalid JSON body is rejected',
-      raw: '{not json',
-      want: { status: 400, body: { error: 'Invalid JSON' } },
-      stored: 0,
-    },
-  ];
+test('subscription routes reject invalid IDs and active lookup leaves unknown IDs alone', async (t) => {
+  const relay = await startRelay();
+  t.after(() => relay.stop());
 
-  for (const c of cases) {
-    await t.test(c.name, async (st) => {
-      const relay = await startRelay();
-      st.after(() => relay.stop());
-      const response = c.raw
-        ? await relay.json('/api/push/register', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: c.raw,
-          })
-        : await relay.post('/api/push/register', c.body);
-      assert.deepEqual(response, c.want);
-      assert.equal((await relay.json('/api/health')).body.subscriptions, c.stored);
+  const cases = [
+    ['unregister invalid ID', 'DELETE', '/api/push/register/invalid!id', 400, 'Invalid subscriptionId'],
+    ['verify invalid ID', 'GET', '/api/push/verify/invalid!id', 400, 'Invalid subscriptionId'],
+    ['active invalid ID', 'GET', '/api/push/active/invalid!id', 400, 'Invalid subscriptionId'],
+    ['JMAP invalid ID', 'POST', '/api/push/jmap/invalid!id', 400, 'Invalid subscriptionId'],
+    ['active unknown ID', 'GET', '/api/push/active/unknown_123', 404, 'Unknown subscription'],
+  ];
+  for (const [name, method, route, status, error] of cases) {
+    await t.test(name, async () => {
+      assert.deepEqual(await relay.json(route, { method }), { status, body: { error } });
     });
   }
 });

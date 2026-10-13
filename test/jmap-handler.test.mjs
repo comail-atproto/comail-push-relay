@@ -1,107 +1,92 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { deliverStateChange } from '../dist/delivery.js';
 import { createJmapHandler } from '../dist/jmap.js';
-import { createRequestHandler } from '../dist/router.js';
-import { fakeStore, jsonBody, record, request, response } from './handler-fixtures.mjs';
+import { pushesForwarded } from '../dist/metrics.js';
+import { jsonBody, memoryStore, record, request, response } from './handler-fixtures.mjs';
 
-const STATE_CHANGE = {
+const CHANGE = {
   '@type': 'StateChange',
   changed: { 'urn:ietf:params:jmap:mail': { Mailbox: 'state-42' } },
 };
 
-test('JMAP records successful and transiently failed push attempts', async (t) => {
-  const cases = [
-    { name: 'delivered', result: { ok: true, status: 201, unregistered: false }, wantOk: true },
-    { name: 'transient failure', result: { ok: false, status: 503, unregistered: false }, wantOk: false },
-  ];
-  for (const c of cases) {
-    await t.test(c.name, async () => {
-      const id = 'subscription_state_1';
-      const saved = record('web');
-      const store = fakeStore(new Map([[id, saved]]));
+const outcomes = [
+  { name: 'delivered', kind: 'web', result: { ok: true, status: 201, unregistered: false }, metric: 'ok' },
+  { name: 'transient server failure', kind: 'web', result: { ok: false, status: 503, unregistered: false }, metric: 'http-5xx' },
+  { name: 'transient client failure', kind: 'web', result: { ok: false, status: 429, unregistered: false }, metric: 'http-4xx' },
+  { name: 'transport failure', kind: 'web', result: { ok: false, status: 0, unregistered: false }, metric: 'fail' },
+  { name: 'unregistered FCM', kind: 'fcm', result: { ok: false, status: 404, unregistered: true }, metric: 'unregistered' },
+  { name: 'unregistered Web Push', kind: 'web', result: { ok: false, status: 410, unregistered: true }, metric: 'unregistered' },
+];
+
+test('JMAP persists delivery outcomes and removes expired transports', async (t) => {
+  for (const outcome of outcomes) {
+    await t.test(outcome.name, async () => {
+      const id = `subscription_${outcome.name.replaceAll(' ', '_')}`;
+      const seeded = record(outcome.kind);
+      const store = memoryStore(new Map([[id, seeded]]));
+      const before = await metricCount(outcome.metric, outcome.kind);
       let refreshes = 0;
+      const transports = {
+        async sendFcm(gotRecord, change) {
+          assert.equal(outcome.kind, 'fcm');
+          assert.deepEqual(gotRecord, seeded);
+          assert.deepEqual(change, CHANGE);
+          return outcome.result;
+        },
+        async sendWeb(gotRecord, change) {
+          assert.equal(outcome.kind, 'web');
+          assert.deepEqual(gotRecord, seeded);
+          assert.deepEqual(change, CHANGE);
+          return outcome.result;
+        },
+      };
       const handler = createJmapHandler({
         store,
         async deliverStateChange(gotRecord, change) {
-          assert.equal(gotRecord, saved);
-          assert.deepEqual(change, STATE_CHANGE);
-          return c.result;
+          return deliverStateChange(gotRecord, change, transports);
         },
-        async refreshActiveGauge() { refreshes++; },
+        async refreshActiveGauge() { refreshes += 1; },
       });
       const res = response();
 
-      await handler(request(STATE_CHANGE), id, res);
+      const started = Date.now();
+      await handler(request(CHANGE), id, res);
+      const finished = Date.now();
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(jsonBody(res), { ok: c.wantOk });
-      assert.ok(saved.lastPushAt > 0);
-      assert.equal(store.calls.puts.length, 1);
-      assert.ok(store.calls.puts[0].record.lastPushAt > 0);
-      assert.deepEqual(store.calls.deletes, []);
-      assert.equal(refreshes, 0);
+      assert.deepEqual(jsonBody(res), { ok: outcome.result.ok });
+      assert.equal(await metricCount(outcome.metric, outcome.kind), before + 1);
+      assert.equal(refreshes, Number(outcome.result.unregistered));
+      if (outcome.result.unregistered) {
+        assert.equal(store.records.has(id), false);
+      } else {
+        const { lastPushAt } = store.records.get(id);
+        assert.ok(lastPushAt >= started && lastPushAt <= finished);
+      }
     });
   }
 });
 
-test('JMAP removes permanently unregistered FCM and Web Push subscriptions', async (t) => {
-  for (const kind of ['fcm', 'web']) {
-    await t.test(kind, async () => {
-      const id = `subscription_${kind}_1`;
-      const saved = record(kind);
-      const store = fakeStore(new Map([[id, saved]]));
-      let refreshes = 0;
-      const handler = createJmapHandler({
-        store,
-        async deliverStateChange() {
-          return { ok: false, status: kind === 'fcm' ? 404 : 410, unregistered: true };
-        },
-        async refreshActiveGauge() { refreshes++; },
-      });
-      const res = response();
-
-      await handler(request(STATE_CHANGE), id, res);
-
-      assert.equal(res.statusCode, 200);
-      assert.deepEqual(jsonBody(res), { ok: false });
-      assert.ok(saved.lastPushAt > 0);
-      assert.ok(store.calls.puts[0].record.lastPushAt > 0);
-      assert.deepEqual(store.calls.deletes, [id]);
-      assert.equal(refreshes, 1);
-    });
-  }
-});
-
-test('JMAP delivery exceptions reach the router 500 response', async () => {
+test('JMAP delivery exceptions leave the subscription unchanged', async () => {
   const id = 'subscription_throw_1';
-  const store = fakeStore(new Map([[id, record('fcm')]]));
-  const handleJmap = createJmapHandler({
+  const saved = record('fcm');
+  const store = memoryStore(new Map([[id, saved]]));
+  const handler = createJmapHandler({
     store,
     async deliverStateChange() { throw new Error('injected delivery failure'); },
     async refreshActiveGauge() {},
   });
-  const router = createRequestHandler({
-    store: { ...store, async size() { return 1; } },
-    subscriptions: {
-      async register() {},
-      async registerWeb() {},
-      async unregister() {},
-      async verificationCode() {},
-      async active() {},
-      async refreshActiveGauge() {},
-    },
-    handleJmap,
-    async handleAccessApproval() {},
-    getVapidPublicKey() { return null; },
-  });
-  const res = response();
 
-  await router(request(STATE_CHANGE, {
-    method: 'POST',
-    url: `/api/push/jmap/${id}`,
-  }), res);
+  await assert.rejects(handler(request(CHANGE), id, response()), /injected delivery failure/);
 
-  assert.equal(res.statusCode, 500);
-  assert.deepEqual(jsonBody(res), { error: 'Internal server error' });
+  assert.equal(store.records.get(id).lastPushAt, null);
 });
+
+async function metricCount(result, transport) {
+  const { values } = await pushesForwarded.get();
+  return values.find((value) => (
+    value.labels.result === result && value.labels.transport === transport
+  ))?.value ?? 0;
+}

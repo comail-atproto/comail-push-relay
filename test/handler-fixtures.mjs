@@ -31,16 +31,10 @@ export function response() {
   return {
     statusCode: 200,
     headersSent: false,
-    headers: {},
     body: '',
-    setHeader(name, value) {
-      this.headers[name.toLowerCase()] = value;
-    },
-    writeHead(status, headers = {}) {
+    setHeader() {},
+    writeHead(status) {
       this.statusCode = status;
-      Object.assign(this.headers, Object.fromEntries(
-        Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]),
-      ));
       this.headersSent = true;
     },
     end(body = '') {
@@ -50,19 +44,18 @@ export function response() {
   };
 }
 
-export function fakeStore(records) {
-  const calls = { gets: [], puts: [], deletes: [] };
+export function memoryStore(records = new Map()) {
   return {
-    calls,
+    records,
     async get(id) {
-      calls.gets.push(id);
-      return records.get(id) ?? null;
+      const record = records.get(id);
+      return record ? structuredClone(record) : null;
     },
     async put(id, value) {
-      calls.puts.push({ id, record: { ...value } });
+      records.set(id, structuredClone(value));
     },
     async delete(id) {
-      calls.deletes.push(id);
+      records.delete(id);
     },
   };
 }
