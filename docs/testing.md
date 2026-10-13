@@ -7,8 +7,8 @@ and every test command builds first so tests run against current `src`.
 
 | Layer | Selection | Covers |
 | --- | --- | --- |
-| Unit | `npm run test:unit` | Release gates, `ci` result reporting, transport outcomes and dispatch behavior. |
-| Component | `npm run test:component` | Relay startup, registration, JMAP, authorization and HTTP contracts with isolated temporary stores. |
+| Unit | `npm run test:unit` | Release gates, `ci` result reporting, and FCM/Web Push transport contracts. |
+| Component | `npm run test:component` | Relay startup, registration, JMAP dispatch, authorization and HTTP contracts with isolated file stores. |
 | All | `npm test` | Both selections, `node --test test/*.test.mjs`. |
 
 ## Prerequisites
@@ -22,14 +22,16 @@ Node >= 20.
 
 ## Determinism
 
-- The component helper starts the server with `PORT=0` and waits for its logged
-  listen address.
-- Each relay gets a fresh temporary `PUSH_DATA_DIR`; the helper deletes only
-  directories it created.
-- The helper strips inherited `VAPID_*`, `FCM_SERVICE_ACCOUNT_JSON` and
+- Most component cases use the assembled server on a loopback port with the real
+  file store. They inspect persisted JSON and replace outbound delivery only.
+- CLI startup and legacy-record cases spawn `dist/server.js` with `PORT=0` and
+  wait for its logged listen address before checking health.
+- Each relay gets a private temporary store; fixtures delete only directories
+  they created.
+- The child fixture strips inherited `VAPID_*`, `FCM_SERVICE_ACCOUNT_JSON` and
   `ACCESS_APPROVAL_DISPATCH_TOKEN`; it also clears inherited release identity
   and data directory settings. Cases opt into synthetic configuration explicitly.
-- Health probes and oversized-body requests have bounded timeouts.
+- Startup waits, shutdown waits, and oversized-body requests have bounded timeouts.
 - VAPID configuration is read once per module instance. The absent-key case
   therefore lives in `test/transport-unconfigured.test.mjs`, which the runner
   isolates in its own process, rather than mutating a configured module.
@@ -37,8 +39,7 @@ Node >= 20.
 ## Failure artifacts
 
 Command exit codes are the gate. A process that fails to spawn, exits early, or
-never becomes ready fails with the child's exit code/signal and a bounded tail
-of its stdout/stderr.
+never becomes ready fails with its cause and bounded stdout/stderr.
 
 ## Live scope
 

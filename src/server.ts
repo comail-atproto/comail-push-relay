@@ -1,11 +1,7 @@
-import http from 'node:http';
-import { createAccessApprovalHandler } from './access-approval.js';
+import { createRelayServer } from './app.js';
 import { deliverAccessApproval, deliverStateChange } from './delivery.js';
-import { createJmapHandler } from './jmap.js';
 import { logger } from './logger.js';
-import { createRequestHandler } from './router.js';
 import { subscriptionStore } from './store.js';
-import { createSubscriptionLifecycle } from './subscriptions.js';
 import { getVapidPublicKey } from './webpush.js';
 
 const port = Number(process.env.PORT ?? 3003);
@@ -14,25 +10,13 @@ const releaseIdentity = /^[0-9a-f]{40}-[0-9a-f]{16}$/.test(process.env.COMAIL_RE
   ? process.env.COMAIL_RELEASE_IDENTITY
   : undefined;
 
-const subscriptions = createSubscriptionLifecycle({ store: subscriptionStore, getVapidPublicKey });
-const handleJmap = createJmapHandler({
+const server = createRelayServer({
   store: subscriptionStore,
   deliverStateChange,
-  refreshActiveGauge: subscriptions.refreshActiveGauge,
-});
-const handleAccessApproval = createAccessApprovalHandler({
-  store: subscriptionStore,
-  deliver: deliverAccessApproval,
-  refreshActiveGauge: subscriptions.refreshActiveGauge,
-});
-const server = http.createServer(createRequestHandler({
-  store: subscriptionStore,
-  subscriptions,
-  handleJmap,
-  handleAccessApproval,
   getVapidPublicKey,
   releaseIdentity,
-}));
+  deliverAccessApproval,
+});
 
 server.listen(port, host, () => {
   const address = server.address();

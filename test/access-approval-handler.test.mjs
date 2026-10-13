@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createAccessApprovalHandler } from '../dist/access-approval.js';
 import { deliverAccessApproval } from '../dist/delivery.js';
-import { jsonBody, memoryStore, record, request, response } from './handler-fixtures.mjs';
+import { record, startTestRelay } from './handler-fixtures.mjs';
 
 const TOKEN = 'a'.repeat(40);
 
@@ -32,12 +31,10 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     [ids.removed, removedRecord],
     [ids.failed, failedRecord],
   ]);
-  const store = memoryStore(records);
   const sent = [];
-  let refreshes = 0;
-  const handler = createAccessApprovalHandler({
-    store,
-    async deliver(webRecord) {
+  const relay = await startTestRelay({
+    records,
+    async deliverAccessApproval(webRecord) {
       return deliverAccessApproval(webRecord, {
         async send(subscription, payload, options) {
           sent.push({ subscription: structuredClone(subscription), payload, options });
@@ -47,13 +44,11 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
         },
       });
     },
-    async refreshActiveGauge() { refreshes++; },
   });
-  const res = response();
-  const originalTimestamps = new Map([...records].map(([id, value]) => [id, value.lastPushAt]));
+  t.after(() => relay.close());
 
   const started = Date.now();
-  await handler(request({
+  const response = await relay.post('/api/push/internal/access-approval', {
     kind: 'access-approval',
     subscriptionIds: [
       ids.delivered,
@@ -64,30 +59,33 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
       ids.failed,
       ids.failed,
     ],
-  }, { headers: { authorization: `Bearer ${TOKEN}` } }), res);
+  }, `Bearer ${TOKEN}`);
   const finished = Date.now();
 
-  assert.equal(res.statusCode, 200);
-  assert.deepEqual(jsonBody(res), {
-    ok: false,
-    delivered: 1,
-    missing: 2,
-    removed: 1,
-    failed: 1,
+  assert.deepEqual(response, {
+    status: 200,
+    body: {
+      ok: false,
+      delivered: 1,
+      missing: 2,
+      removed: 1,
+      failed: 1,
+    },
   });
   assert.deepEqual(sent.map(({ subscription }) => subscription), [
     deliveredRecord, removedRecord, failedRecord,
   ]);
-  assert.deepEqual(sent.map(({ payload, options }) => ({ payload, options })), [
-    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
-    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
-    { payload: { kind: 'access-approval' }, options: { ttl: 120, topic: 'comail-access-approval' } },
-  ]);
-  const { lastPushAt } = store.records.get(ids.delivered);
-  assert.ok(lastPushAt >= started && lastPushAt <= finished);
-  assert.equal(store.records.has(ids.removed), false);
-  for (const id of [ids.fcm, ids.failed]) {
-    assert.equal(records.get(id).lastPushAt, originalTimestamps.get(id));
+  for (const { payload, options } of sent) {
+    assert.deepEqual({ payload, options }, {
+      payload: { kind: 'access-approval' },
+      options: { ttl: 120, topic: 'comail-access-approval' },
+    });
   }
-  assert.equal(refreshes, 1);
+  const stored = await relay.readRecords();
+  const { lastPushAt } = stored[ids.delivered];
+  assert.ok(lastPushAt >= started && lastPushAt <= finished);
+  assert.equal(ids.removed in stored, false);
+  for (const id of [ids.fcm, ids.failed]) {
+    assert.equal(stored[id].lastPushAt, records.get(id).lastPushAt);
+  }
 });

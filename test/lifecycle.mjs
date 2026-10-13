@@ -1,17 +1,14 @@
-// Child fixture with bounded readiness probes and captured failure diagnostics.
-
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createHttpClient } from './http-client.mjs';
 
 const READY_MESSAGE = 'relay: listening';
 const READY_TIMEOUT_MS = 10_000;
-const HEALTH_TIMEOUT_MS = 2_000;
-const CAPTURE_LIMIT = 16 * 1024;
-const DIAGNOSTIC_TAIL = 4 * 1024;
-
-// Child cases opt in to credentials explicitly.
+const CAPTURE_LIMIT = 4 * 1024;
+// Child credentials are absent unless a case supplies them in `env`.
 const SANITIZED_ENV = [
   'VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
@@ -22,46 +19,10 @@ const SANITIZED_ENV = [
   'PUSH_DATA_DIR',
 ];
 
-function boundedCapture() {
+function capture(stream) {
   let text = '';
-  return {
-    append(chunk) {
-      text = (text + chunk.toString('utf8')).slice(-CAPTURE_LIMIT);
-    },
-    text: () => text,
-  };
-}
-
-function tail(text, limit = DIAGNOSTIC_TAIL) {
-  return text.length <= limit ? text : `…${text.slice(-limit)}`;
-}
-
-function readyPortFrom(stdout) {
-  for (const line of stdout.split('\n')) {
-    if (!line.includes(READY_MESSAGE)) continue;
-    try {
-      const record = JSON.parse(line);
-      if (record.msg === READY_MESSAGE && Number.isInteger(record.port) && record.port > 0) {
-        return record.port;
-      }
-    } catch {
-      // Not a structured log line.
-    }
-  }
-  return null;
-}
-
-function readinessError(reason, context) {
-  const { child, dataDir, stdout, stderr, spawnError } = context;
-  const lines = [
-    reason,
-    `  data dir: ${dataDir ?? '<default>'}`,
-    `  child exit: code=${child.exitCode ?? 'null'} signal=${child.signalCode ?? 'null'}`,
-  ];
-  if (spawnError) lines.push(`  spawn error: ${spawnError.message}`);
-  lines.push(`  stderr tail: ${tail(stderr.text()) || '<empty>'}`);
-  lines.push(`  stdout tail: ${tail(stdout.text()) || '<empty>'}`);
-  return new Error(lines.join('\n'));
+  stream.on('data', (chunk) => { text = (text + chunk.toString('utf8')).slice(-CAPTURE_LIMIT); });
+  return () => text;
 }
 
 function spawnRelay(options) {
@@ -74,117 +35,98 @@ function spawnRelay(options) {
     ...options.env,
   });
 
-  const deleteDataDir = options.deleteDataDir === true;
-  const dataDir = options.dataDir ?? null;
-  const stdout = boundedCapture();
-  const stderr = boundedCapture();
   const child = spawn(process.execPath, ['dist/server.js'], {
     cwd: options.cwd ?? process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  child.stdout.on('data', (chunk) => stdout.append(chunk));
-  child.stderr.on('data', (chunk) => stderr.append(chunk));
-
-  let spawnError = null;
-  const closed = new Promise((resolve) => child.once('close', resolve));
-  child.on('error', (error) => {
-    spawnError = error;
+  const stdout = capture(child.stdout);
+  const stderr = capture(child.stderr);
+  const lines = createInterface({ input: child.stdout });
+  let resolveReady;
+  let rejectReady;
+  const ready = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
   });
-
-  const session = {
+  const state = {
     child,
-    dataDir,
-    port: null,
-    base: null,
-    stdout: () => stdout.text(),
-    stderr: () => stderr.text(),
-
-    async waitForReady(timeoutMs = READY_TIMEOUT_MS) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const context = { child, dataDir, stdout, stderr, spawnError };
-        if (spawnError) {
-          throw readinessError(`relay failed to spawn: ${spawnError.message}`, context);
-        }
-        if (child.exitCode !== null || child.signalCode !== null) {
-          throw readinessError('relay exited before signaling readiness', context);
-        }
-        const port = readyPortFrom(stdout.text());
-        if (port !== null) {
-          const base = `http://127.0.0.1:${port}`;
-          try {
-            const response = await fetch(`${base}/api/health`, {
-              signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-            });
-            if (response.ok) {
-              session.port = port;
-              session.base = base;
-              return session;
-            }
-          } catch {
-            // Listener may not be accepting yet.
-          }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      throw readinessError(`relay did not become ready within ${timeoutMs}ms`, { child, dataDir, stdout, stderr, spawnError });
-    },
-
-    async stop() {
-      if (child.pid && child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGTERM');
-        const killer = setTimeout(() => child.kill('SIGKILL'), 5000);
-        try {
-          await closed;
-        } finally {
-          clearTimeout(killer);
-        }
-      }
-      await closed;
-      if (deleteDataDir && dataDir) {
-        await rm(dataDir, { recursive: true, force: true });
-      }
-    },
+    stdout,
+    stderr,
+    lines,
+    ready,
+    closed: new Promise((resolve) => child.once('close', resolve)),
   };
 
-  session.request = (route, init) => fetch(session.base + route, init);
-  session.json = async (route, init) => {
-    const response = await session.request(route, init);
-    return { status: response.status, body: await response.json() };
-  };
-  session.post = (route, body, authorization) =>
-    session.json(route, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(authorization ? { authorization } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-
-  return session;
+  lines.on('line', (line) => {
+    try {
+      const { msg, port } = JSON.parse(line);
+      if (msg === READY_MESSAGE && Number.isInteger(port) && port > 0) resolveReady(port);
+    } catch {
+      // Ignore non-JSON log lines.
+    }
+  });
+  child.once('error', rejectReady);
+  child.once('close', (code, signal) => {
+    rejectReady(new Error(`relay exited before readiness (code=${code}, signal=${signal})`));
+  });
+  return state;
 }
 
-// Remove only stores created by this helper, including startup failures.
+function failure(error, state) {
+  const output = [state.stderr(), state.stdout()].filter(Boolean).join('\n');
+  return new Error([error.message, output].filter(Boolean).join('\n'));
+}
+
+async function waitForReady(state) {
+  let timeout;
+  try {
+    return await Promise.race([
+      state.ready,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('relay readiness timed out')), READY_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    throw failure(error, state);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function closeRelay(state, dataDir) {
+  const { child, closed } = state;
+  if (child.pid && child.exitCode === null && child.signalCode === null) {
+    const forceKill = setTimeout(() => child.kill('SIGKILL'), 5000);
+    child.kill('SIGTERM');
+    try {
+      await closed;
+    } finally {
+      clearTimeout(forceKill);
+    }
+  } else {
+    await closed;
+  }
+  state.lines.close();
+  await rm(dataDir, { recursive: true, force: true });
+}
+
 export async function startRelay(options = {}) {
-  const owned = options.dataDir === undefined;
-  const dataDir = options.dataDir
-    ?? await mkdtemp(path.join(os.tmpdir(), 'push-relay-test-'));
-  let session;
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-test-'));
+  let state;
   try {
     if (options.initialRecords) {
-      await mkdir(dataDir, { recursive: true });
-      await writeFile(
-        path.join(dataDir, 'subscriptions.json'),
-        JSON.stringify({ records: options.initialRecords }),
-      );
+      await writeFile(path.join(dataDir, 'subscriptions.json'), JSON.stringify({ records: options.initialRecords }));
     }
-    session = spawnRelay({ ...options, dataDir, deleteDataDir: owned });
-    return await session.waitForReady(options.readyTimeoutMs);
+    state = spawnRelay({ ...options, dataDir });
+    const port = await waitForReady(state);
+    return {
+      port,
+      ...createHttpClient(`http://127.0.0.1:${port}`, () => closeRelay(state, dataDir)),
+    };
   } catch (error) {
-    if (session) await session.stop();
-    else if (owned) await rm(dataDir, { recursive: true, force: true });
+    if (state) await closeRelay(state, dataDir);
+    else await rm(dataDir, { recursive: true, force: true });
     throw error;
   }
 }

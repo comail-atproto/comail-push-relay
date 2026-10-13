@@ -1,4 +1,10 @@
-import { Readable } from 'node:stream';
+import { once } from 'node:events';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createRelayServer } from '../dist/app.js';
+import { FileSubscriptionStore } from '../dist/store.js';
+import { createHttpClient } from './http-client.mjs';
 
 export function record(kind, overrides = {}) {
   const common = {
@@ -19,47 +25,46 @@ export function record(kind, overrides = {}) {
       };
 }
 
-export function request(body, { method = 'POST', url = '/', headers = {} } = {}) {
-  const req = Readable.from([Buffer.from(JSON.stringify(body))]);
-  req.method = method;
-  req.url = url;
-  req.headers = headers;
-  return req;
-}
-
-export function response() {
-  return {
-    statusCode: 200,
-    headersSent: false,
-    body: '',
-    setHeader() {},
-    writeHead(status) {
-      this.statusCode = status;
-      this.headersSent = true;
-    },
-    end(body = '') {
-      this.body = body.toString();
-      this.headersSent = true;
-    },
-  };
-}
-
-export function memoryStore(records = new Map()) {
-  return {
-    records,
-    async get(id) {
-      const record = records.get(id);
-      return record ? structuredClone(record) : null;
-    },
-    async put(id, value) {
-      records.set(id, structuredClone(value));
-    },
-    async delete(id) {
-      records.delete(id);
-    },
-  };
-}
-
-export function jsonBody(res) {
-  return JSON.parse(res.body);
+export async function startTestRelay({ records = {}, ...dependencies } = {}) {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-app-test-'));
+  let server;
+  try {
+    const initialRecords = records instanceof Map ? Object.fromEntries(records) : records;
+    if (Object.keys(initialRecords).length) {
+      await writeFile(path.join(dataDir, 'subscriptions.json'), JSON.stringify({ records: initialRecords }));
+    }
+    server = createRelayServer({
+      store: new FileSubscriptionStore(dataDir),
+      getVapidPublicKey: () => null,
+      async deliverStateChange() { throw new Error('not used'); },
+      async deliverAccessApproval() { throw new Error('not used'); },
+      ...dependencies,
+    });
+    const listening = once(server, 'listening');
+    server.listen(0, '127.0.0.1');
+    await listening;
+    const { port } = server.address();
+    return {
+      ...createHttpClient(`http://127.0.0.1:${port}`, async () => {
+        try {
+          await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+        } finally {
+          await rm(dataDir, { recursive: true, force: true });
+        }
+      }),
+      dataDir,
+      async readRecords() {
+        try {
+          return JSON.parse(await readFile(path.join(dataDir, 'subscriptions.json'), 'utf8')).records;
+        } catch (error) {
+          if (error.code === 'ENOENT') return {};
+          throw error;
+        }
+      },
+    };
+  } catch (error) {
+    if (server?.listening) await new Promise((resolve) => server.close(resolve));
+    await rm(dataDir, { recursive: true, force: true });
+    throw error;
+  }
 }

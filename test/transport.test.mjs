@@ -1,12 +1,8 @@
-// Exercise the transport boundary in-process with a recording transport.
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import webpush from 'web-push';
 import { record } from './handler-fixtures.mjs';
 
-// VAPID config is read once per module instance; the absent-key case has its
-// own runner process in transport-unconfigured.test.mjs.
 const keys = webpush.generateVAPIDKeys();
 process.env.VAPID_PUBLIC_KEY = keys.publicKey;
 process.env.VAPID_PRIVATE_KEY = keys.privateKey;
@@ -65,7 +61,6 @@ test('web push StateChange payload carries opaque state references only', async 
   const result = await sendWebPush(record('web', { accountLabel: 'account' }), {
     '@type': 'StateChange',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
-    // Fields the relay must never forward, even if a producer adds them.
     subject: 'private subject',
     body: 'private body',
   }, transport);
@@ -76,6 +71,4 @@ test('web push StateChange payload carries opaque state references only', async 
     accountLabel: 'account',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
   });
-  assert.equal('subject' in transport.sent[0].payload, false);
-  assert.equal('body' in transport.sent[0].payload, false);
 });

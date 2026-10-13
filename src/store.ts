@@ -9,12 +9,12 @@ import type { SubscriptionRecord } from './types.js';
 // matters for users who go quiet for ~3 months.
 const TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-function getPushDir(): string {
-  return process.env.PUSH_DATA_DIR || path.join(process.cwd(), 'data');
+function getPushDir(dataDir?: string): string {
+  return (dataDir ?? process.env.PUSH_DATA_DIR) || path.join(process.cwd(), 'data');
 }
 
-function subscriptionsPath(): string {
-  return path.join(getPushDir(), 'subscriptions.json');
+function subscriptionsPath(dataDir?: string): string {
+  return path.join(getPushDir(dataDir), 'subscriptions.json');
 }
 
 interface SubscriptionsFile {
@@ -29,14 +29,16 @@ export interface SubscriptionStore {
   sizeByKind(): Promise<{ fcm: number; web: number }>;
 }
 
-class FileSubscriptionStore implements SubscriptionStore {
+export class FileSubscriptionStore implements SubscriptionStore {
   private cache: Record<string, SubscriptionRecord> = {};
   private loaded = false;
   private writeQueue: Promise<void> = Promise.resolve();
 
+  constructor(private readonly dataDir?: string) {}
+
   async load(): Promise<void> {
     try {
-      const raw = await readFile(subscriptionsPath(), 'utf-8');
+      const raw = await readFile(subscriptionsPath(this.dataDir), 'utf-8');
       const parsed = JSON.parse(raw) as SubscriptionsFile;
       this.cache = parsed.records ?? {};
       this.migrateLegacyRecords();
@@ -128,11 +130,11 @@ class FileSubscriptionStore implements SubscriptionStore {
   }
 
   private async flush(): Promise<void> {
-    const dir = getPushDir();
+    const dir = getPushDir(this.dataDir);
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
-    const target = subscriptionsPath();
+    const target = subscriptionsPath(this.dataDir);
     const tmp = target + '.tmp';
     const payload: SubscriptionsFile = { records: this.cache };
     await writeFile(tmp, JSON.stringify(payload, null, 2), 'utf-8');

@@ -38,7 +38,6 @@ export interface WebPushSendResult {
   unregistered: boolean;
 }
 
-// Tests record this boundary without contacting a push service.
 export interface WebPushTransport {
   send(
     subscription: WebPushSubscription,

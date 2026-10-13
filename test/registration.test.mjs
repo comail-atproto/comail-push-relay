@@ -1,74 +1,55 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { startRelay } from './lifecycle.mjs';
-import { WEB_PUSH_ENV, WEB_SUBSCRIPTION } from './web-push-fixture.mjs';
+import { startTestRelay } from './handler-fixtures.mjs';
+import { WEB_PUSH_PUBLIC_KEY, WEB_SUBSCRIPTION } from './web-push-fixture.mjs';
 
 const ID = 'subscription_web_123';
 const FCM_TOKEN = 'f'.repeat(64);
+const FCM_REGISTRATION = { subscriptionId: ID, fcmToken: FCM_TOKEN };
+const WEB_REGISTRATION = { subscriptionId: ID, subscription: WEB_SUBSCRIPTION };
 
-test('registration rejects invalid input without storing records', async (t) => {
+function webRegistration(subscriptionChanges) {
+  return {
+    ...WEB_REGISTRATION,
+    subscription: {
+      ...WEB_SUBSCRIPTION,
+      ...subscriptionChanges,
+      keys: { ...WEB_SUBSCRIPTION.keys, ...subscriptionChanges.keys },
+    },
+  };
+}
+
+test('registration rejects invalid input without writing records', async (t) => {
   const transports = [
     {
       name: 'FCM',
       route: '/api/push/register',
-      env: {},
       cases: [
         ['missing ID', { fcmToken: FCM_TOKEN }, 'Invalid subscriptionId'],
-        ['short ID', { subscriptionId: 'short', fcmToken: FCM_TOKEN }, 'Invalid subscriptionId'],
-        ['short token', { subscriptionId: ID, fcmToken: 'too-short' }, 'Invalid fcmToken'],
+        ['short ID', { ...FCM_REGISTRATION, subscriptionId: 'short' }, 'Invalid subscriptionId'],
+        ['short token', { ...FCM_REGISTRATION, fcmToken: 'too-short' }, 'Invalid fcmToken'],
         ['malformed JSON', '{not json', 'Invalid JSON'],
       ],
     },
     {
       name: 'Web Push',
       route: '/api/push/register/web',
-      env: WEB_PUSH_ENV,
       cases: [
         ['missing ID', { subscription: WEB_SUBSCRIPTION }, 'Invalid subscriptionId'],
-        [
-          'non-HTTPS endpoint',
-          {
-            subscriptionId: ID,
-            subscription: {
-              ...WEB_SUBSCRIPTION,
-              endpoint: 'http://push.example.test/subscription/123',
-            },
-          },
-          'Invalid subscription',
-        ],
-        [
-          'short p256dh key',
-          {
-            subscriptionId: ID,
-            subscription: {
-              ...WEB_SUBSCRIPTION,
-              keys: { ...WEB_SUBSCRIPTION.keys, p256dh: 'short' },
-            },
-          },
-          'Invalid subscription',
-        ],
-        [
-          'short auth key',
-          {
-            subscriptionId: ID,
-            subscription: {
-              ...WEB_SUBSCRIPTION,
-              keys: { ...WEB_SUBSCRIPTION.keys, auth: 'short' },
-            },
-          },
-          'Invalid subscription',
-        ],
+        ['non-HTTPS endpoint', webRegistration({ endpoint: 'http://push.example.test/subscription/123' }), 'Invalid subscription'],
+        ['short p256dh key', webRegistration({ keys: { p256dh: 'short' } }), 'Invalid subscription'],
+        ['short auth key', webRegistration({ keys: { auth: 'short' } }), 'Invalid subscription'],
         ['malformed JSON', '{not json', 'Invalid JSON'],
       ],
     },
   ];
 
   for (const transport of transports) {
+    const relay = await startTestRelay({ getVapidPublicKey: () => WEB_PUSH_PUBLIC_KEY });
+    t.after(() => relay.close());
     for (const [name, bodyOrRaw, error] of transport.cases) {
-      await t.test(`${transport.name}: ${name}`, async (st) => {
-        const relay = await startRelay({ env: transport.env });
-        st.after(() => relay.stop());
+      await t.test(`${transport.name}: ${name}`, async () => {
         const response = typeof bodyOrRaw === 'string'
           ? await relay.json(transport.route, {
               method: 'POST',
@@ -78,7 +59,7 @@ test('registration rejects invalid input without storing records', async (t) => 
           : await relay.post(transport.route, bodyOrRaw);
         assert.equal(response.status, 400);
         assert.deepEqual(response.body, { error });
-        assert.equal((await relay.json('/api/health')).body.subscriptions, 0);
+        assert.deepEqual(await relay.readRecords(), {});
       });
     }
   }
