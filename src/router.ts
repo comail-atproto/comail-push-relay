@@ -51,14 +51,12 @@ export function createRequestHandler(dependencies: RouterDependencies): http.Req
     const route = normalizeRoute(method, path);
     const httpTimer = httpDurationSeconds.startTimer({ method, route });
     applyCors(req, res);
-    if (method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      httpTimer();
-      httpRequestsTotal.inc({ method, route, status: '204' });
-      return;
-    }
     try {
+      if (method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
       return await routeRequest(dependencies, req, res, method, path);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -69,7 +67,9 @@ export function createRequestHandler(dependencies: RouterDependencies): http.Req
     } finally {
       httpTimer();
       httpRequestsTotal.inc({ method, route, status: String(res.statusCode) });
-      logger.info('relay: request', { method, path, status: res.statusCode, ms: Date.now() - started });
+      if (method !== 'OPTIONS') {
+        logger.info('relay: request', { method, path, status: res.statusCode, ms: Date.now() - started });
+      }
     }
   };
 }

@@ -43,58 +43,48 @@ export function createSubscriptionLifecycle({
   async function register(
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    transport: 'fcm' | 'web' = 'fcm',
   ): Promise<void> {
+    if (transport === 'web' && !getVapidPublicKey()) {
+      return sendJson(res, 503, { error: 'Web Push not configured' });
+    }
     const body = (await readJson(req)) as RegistrationBody | null | undefined;
     if (!body || typeof body !== 'object') {
       return sendJson(res, 400, { error: 'Invalid JSON' });
     }
-    const { subscriptionId, fcmToken, accountLabel } = body;
+    const { subscriptionId, accountLabel } = body;
     if (!isValidSubscriptionId(subscriptionId)) {
       return sendJson(res, 400, { error: 'Invalid subscriptionId' });
     }
-    if (!isValidFcmToken(fcmToken)) {
-      return sendJson(res, 400, { error: 'Invalid fcmToken' });
-    }
 
-    const record: FcmSubscriptionRecord = {
-      kind: 'fcm',
-      fcmToken,
-      ...(await registrationMetadata(store, subscriptionId, accountLabel)),
-    };
+    let record: FcmSubscriptionRecord | WebSubscriptionRecord;
+    if (transport === 'fcm') {
+      if (!isValidFcmToken(body.fcmToken)) {
+        return sendJson(res, 400, { error: 'Invalid fcmToken' });
+      }
+      record = {
+        kind: 'fcm',
+        fcmToken: body.fcmToken,
+        ...(await registrationMetadata(store, subscriptionId, accountLabel)),
+      };
+    } else {
+      if (!isValidWebPushSubscription(body.subscription)) {
+        return sendJson(res, 400, { error: 'Invalid subscription' });
+      }
+      record = {
+        kind: 'web',
+        webPush: body.subscription,
+        ...(await registrationMetadata(store, subscriptionId, accountLabel)),
+      };
+    }
     await store.put(subscriptionId, record);
-    subscriptionsRegistered.inc({ transport: 'fcm' });
+    subscriptionsRegistered.inc({ transport });
     await refreshActiveGauge();
     return sendJson(res, 200, { ok: true });
   }
 
-  async function registerWeb(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-  ): Promise<void> {
-    if (!getVapidPublicKey()) {
-      return sendJson(res, 503, { error: 'Web Push not configured' });
-    }
-    const body = (await readJson(req)) as WebRegistrationBody | null | undefined;
-    if (!body || typeof body !== 'object') {
-      return sendJson(res, 400, { error: 'Invalid JSON' });
-    }
-    const { subscriptionId, subscription, accountLabel } = body;
-    if (!isValidSubscriptionId(subscriptionId)) {
-      return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-    }
-    if (!isValidWebPushSubscription(subscription)) {
-      return sendJson(res, 400, { error: 'Invalid subscription' });
-    }
-
-    const record: WebSubscriptionRecord = {
-      kind: 'web',
-      webPush: subscription,
-      ...(await registrationMetadata(store, subscriptionId, accountLabel)),
-    };
-    await store.put(subscriptionId, record);
-    subscriptionsRegistered.inc({ transport: 'web' });
-    await refreshActiveGauge();
-    return sendJson(res, 200, { ok: true });
+  function registerWeb(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    return register(req, res, 'web');
   }
 
   async function unregister(id: string, res: http.ServerResponse): Promise<void> {
@@ -142,12 +132,7 @@ interface RegistrationBody {
   subscriptionId?: unknown;
   fcmToken?: unknown;
   accountLabel?: unknown;
-}
-
-interface WebRegistrationBody {
-  subscriptionId?: unknown;
   subscription?: unknown;
-  accountLabel?: unknown;
 }
 
 function accountLabelValue(value: unknown): string | undefined {
@@ -158,7 +143,7 @@ async function registrationMetadata(
   store: SubscriptionStore,
   subscriptionId: string,
   accountLabel: unknown,
-): Promise<RegistrationMetadata> {
+) {
   const existing = await store.get(subscriptionId);
   // A new JMAP registration must not reuse an old verification code.
   return {
@@ -167,11 +152,4 @@ async function registrationMetadata(
     lastPushAt: existing?.lastPushAt ?? null,
     accountLabel: accountLabelValue(accountLabel),
   };
-}
-
-interface RegistrationMetadata {
-  verificationCode: null;
-  createdAt: number;
-  lastPushAt: number | null;
-  accountLabel?: string;
 }
