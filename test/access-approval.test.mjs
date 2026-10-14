@@ -14,14 +14,8 @@ function configureToken(value) {
 
 test('access-approval checks bearer, payload, and unique missing IDs', async (t) => {
   const originalToken = process.env.ACCESS_APPROVAL_DISPATCH_TOKEN;
-  const relay = await startTestRelay();
-  t.after(async () => {
-    try {
-      await relay.close();
-    } finally {
-      configureToken(originalToken);
-    }
-  });
+  t.after(() => configureToken(originalToken));
+  const relay = await startTestRelay(t);
 
   for (const [name, token] of [['missing', undefined], ['short', 'short']]) {
     await t.test(`configuration: ${name}`, async () => {

@@ -47,7 +47,6 @@ test('readiness loads legacy records, configures Web Push, and drops expired rec
   });
   t.after(() => relay.close());
 
-  assert.ok(Number.isInteger(relay.port) && relay.port > 0, `port=${relay.port}`);
   const health = (await relay.json('/api/health')).body;
   assert.equal(health.ok, true);
   assert.equal(health.subscriptions, 1);

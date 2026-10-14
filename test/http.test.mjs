@@ -4,8 +4,7 @@ import test from 'node:test';
 import { startTestRelay } from './handler-fixtures.mjs';
 
 test('HTTP contracts for public routes, CORS, malformed IDs, and body limits', async (t) => {
-  const relay = await startTestRelay();
-  t.after(() => relay.close());
+  const relay = await startTestRelay(t);
 
   await t.test('public routes and CORS preflight', async () => {
     const html = await relay.request('/', { headers: { accept: 'text/html' } });

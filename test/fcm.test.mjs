@@ -1,18 +1,10 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, verify } from 'node:crypto';
+import { verify } from 'node:crypto';
 import test from 'node:test';
+import { serviceAccount, signingKey, tokenUri } from './fcm-fixture.mjs';
 import { record } from './handler-fixtures.mjs';
 
-const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const tokenUri = 'https://oauth.example.test/token';
-const serviceAccount = {
-  type: 'service_account',
-  project_id: 'test-project',
-  private_key_id: 'test-key',
-  private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
-  client_email: 'relay@example.test',
-  token_uri: tokenUri,
-};
+const { publicKey } = signingKey;
 const fcmRecord = record('fcm', { accountLabel: 'mail account' });
 const change = {
   '@type': 'StateChange',

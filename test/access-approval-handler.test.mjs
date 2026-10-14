@@ -53,11 +53,10 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     }
     return { statusCode: 201 };
   });
-  const relay = await startTestRelay({
+  const relay = await startTestRelay(t, {
     records,
     deliverAccessApproval,
   });
-  t.after(() => relay.close());
 
   const now = Date.now();
   t.mock.method(Date, 'now', () => now);

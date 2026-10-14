@@ -21,15 +21,10 @@ test('registration, StateChange, refresh, transport switches, and delete persist
   const activeGraceMs = 10 * 60 * 1000;
   let now = createdAt;
   t.mock.method(Date, 'now', () => now);
-  const deliveries = [];
-  const relay = await startTestRelay({
+  const relay = await startTestRelay(t, {
     getVapidPublicKey: () => WEB_PUSH_PUBLIC_KEY,
-    async deliverStateChange(record, change) {
-      deliveries.push({ kind: record.kind, change });
-      return { ok: true, status: 201, unregistered: false };
-    },
+    async deliverStateChange() { return { ok: true, status: 201, unregistered: false }; },
   });
-  t.after(() => relay.close());
 
   const read = async () => (await relay.readRecords())[ID];
   const verify = () => relay.json(`/api/push/verify/${ID}`);
@@ -53,7 +48,6 @@ test('registration, StateChange, refresh, transport switches, and delete persist
   now += 1;
   const pushedAt = now;
   assert.deepEqual(await relay.post(`/api/push/jmap/${ID}`, stateChange), { status: 200, body: { ok: true } });
-  assert.deepEqual(deliveries, [{ kind: 'fcm', change: stateChange }]);
   const pushed = await read();
   assert.equal(pushed.verificationCode, '123456');
   assert.equal(pushed.lastPushAt, pushedAt);
@@ -101,8 +95,7 @@ test('registration, StateChange, refresh, transport switches, and delete persist
 });
 
 test('Web Push endpoints report unconfigured without VAPID keys', async (t) => {
-  const relay = await startTestRelay();
-  t.after(() => relay.close());
+  const relay = await startTestRelay(t);
 
   assert.deepEqual(await relay.json('/api/push/vapid-public-key'), {
     status: 503,

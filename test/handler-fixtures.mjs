@@ -5,27 +5,9 @@ import path from 'node:path';
 import { createRelayServer } from '../dist/app.js';
 import { FileSubscriptionStore } from '../dist/store.js';
 import { createHttpClient } from './http-client.mjs';
+export { record } from './record-fixture.mjs';
 
-export function record(kind, overrides = {}) {
-  const common = {
-    verificationCode: null,
-    createdAt: Date.now(),
-    lastPushAt: null,
-    ...overrides,
-  };
-  return kind === 'fcm'
-    ? { ...common, kind, fcmToken: 'f'.repeat(64) }
-    : {
-        ...common,
-        kind,
-        webPush: {
-          endpoint: 'https://push.example.test/subscription/123',
-          keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
-        },
-      };
-}
-
-export async function startTestRelay({ records = {}, ...dependencies } = {}) {
+export async function startTestRelay(t, { records = {}, ...dependencies } = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-app-test-'));
   let server;
   try {
@@ -44,14 +26,16 @@ export async function startTestRelay({ records = {}, ...dependencies } = {}) {
     server.listen(0, '127.0.0.1');
     await listening;
     const { port } = server.address();
+    const relay = createHttpClient(`http://127.0.0.1:${port}`, async () => {
+      try {
+        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      } finally {
+        await rm(dataDir, { recursive: true, force: true });
+      }
+    });
+    t.after(() => relay.close());
     return {
-      ...createHttpClient(`http://127.0.0.1:${port}`, async () => {
-        try {
-          await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-        } finally {
-          await rm(dataDir, { recursive: true, force: true });
-        }
-      }),
+      ...relay,
       dataDir,
       async readRecords() {
         try {

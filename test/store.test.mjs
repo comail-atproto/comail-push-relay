@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { FileSubscriptionStore } from '../dist/store.js';
+import { record } from './record-fixture.mjs';
 
 test('concurrent initial writes retain every record', async (t) => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-store-test-'));
@@ -19,13 +20,7 @@ test('concurrent initial writes retain every record', async (t) => {
   ];
   const records = ids.map((id, index) => [
     id,
-    {
-      kind: 'fcm',
-      fcmToken: String(index).padStart(64, 'f'),
-      verificationCode: null,
-      createdAt,
-      lastPushAt: null,
-    },
+    record('fcm', { fcmToken: String(index).padStart(64, 'f'), createdAt }),
   ]);
 
   await Promise.all(records.map(([id, record]) => store.put(id, record)));
@@ -47,17 +42,14 @@ test('last push time controls expiry and cached expiry persists', async (t) => {
   let now = 2_000_000_000_000;
   t.mock.method(Date, 'now', () => now);
   const id = 'subscription_recent_push';
-  const record = {
-    kind: 'fcm',
-    fcmToken: 'f'.repeat(64),
-    verificationCode: null,
+  const expiring = record('fcm', {
     createdAt: now - (2 * ttl),
     lastPushAt: now - ttl,
-  };
+  });
 
-  await new FileSubscriptionStore(dataDir).put(id, record);
+  await new FileSubscriptionStore(dataDir).put(id, expiring);
   const cached = new FileSubscriptionStore(dataDir);
-  assert.deepEqual(await cached.get(id), record);
+  assert.deepEqual(await cached.get(id), expiring);
 
   now += 1;
   assert.equal(await cached.get(id), null);
@@ -71,15 +63,9 @@ test('write failures retain the published file and recover the write queue', asy
   t.after(() => rm(dataDir, { recursive: true, force: true }));
   const store = new FileSubscriptionStore(dataDir);
   const createdAt = Date.now();
-  const first = {
-    kind: 'fcm',
-    fcmToken: '1'.repeat(64),
-    verificationCode: null,
-    createdAt,
-    lastPushAt: null,
-  };
-  const second = { ...first, fcmToken: '2'.repeat(64) };
-  const third = { ...first, fcmToken: '3'.repeat(64) };
+  const first = record('fcm', { fcmToken: '1'.repeat(64), createdAt });
+  const second = record('fcm', { fcmToken: '2'.repeat(64), createdAt });
+  const third = record('fcm', { fcmToken: '3'.repeat(64), createdAt });
   const target = path.join(dataDir, 'subscriptions.json');
   const temporary = `${target}.tmp`;
 

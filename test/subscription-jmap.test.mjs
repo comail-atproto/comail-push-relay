@@ -6,8 +6,7 @@ import { record, startTestRelay } from './handler-fixtures.mjs';
 const SUBSCRIPTION_ID = 'subscription_12345';
 
 test('subscription routes reject invalid IDs before store access', async (t) => {
-  const relay = await startTestRelay();
-  t.after(() => relay.close());
+  const relay = await startTestRelay(t);
 
   const invalidIds = [
     ['unregister', 'DELETE', '/api/push/register/invalid!id'],
@@ -30,8 +29,7 @@ test('subscription routes reject invalid IDs before store access', async (t) => 
 });
 
 test('JMAP callbacks reject missing records and malformed or unsupported bodies', async (t) => {
-  const relay = await startTestRelay({ records: { [SUBSCRIPTION_ID]: record('fcm') } });
-  t.after(() => relay.close());
+  const relay = await startTestRelay(t, { records: { [SUBSCRIPTION_ID]: record('fcm') } });
 
   const failures = [
     ['unknown subscription', 'unknown_subscription', JSON.stringify({ '@type': 'PushVerification', verificationCode: '123456' }), 404, 'Unknown subscription'],
@@ -41,11 +39,11 @@ test('JMAP callbacks reject missing records and malformed or unsupported bodies'
   ];
   for (const [name, id, body, status, error] of failures) {
     await t.test(name, async () => {
-      const response = await relay.request(`/api/push/jmap/${id}`, {
+      const response = await relay.json(`/api/push/jmap/${id}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
-      }).then(async (res) => ({ status: res.status, body: await res.json() }));
+      });
       assert.deepEqual(response, { status, body: { error } });
     });
   }

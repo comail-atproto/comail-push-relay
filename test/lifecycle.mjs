@@ -5,9 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHttpClient } from './http-client.mjs';
 
-const READY_MESSAGE = 'relay: listening';
-const READY_TIMEOUT_MS = 10_000;
-const CAPTURE_LIMIT = 4 * 1024;
 // Child credentials are absent unless a case supplies them in `env`.
 const SANITIZED_ENV = [
   'VAPID_PUBLIC_KEY',
@@ -21,111 +18,73 @@ const SANITIZED_ENV = [
 
 function capture(stream) {
   let text = '';
-  stream.on('data', (chunk) => { text = (text + chunk.toString('utf8')).slice(-CAPTURE_LIMIT); });
+  stream.on('data', (chunk) => { text = (text + chunk.toString('utf8')).slice(-4096); });
   return () => text;
 }
 
-function spawnRelay(options) {
-  const env = { ...process.env };
-  for (const key of SANITIZED_ENV) delete env[key];
-  Object.assign(env, {
-    HOST: '127.0.0.1',
-    PORT: '0',
-    ...options.env,
-    PUSH_DATA_DIR: options.dataDir,
-  });
-
-  const child = spawn(process.execPath, ['dist/server.js'], {
-    cwd: options.cwd ?? process.cwd(),
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+async function waitForPort(child) {
   const stdout = capture(child.stdout);
   const stderr = capture(child.stderr);
   const lines = createInterface({ input: child.stdout });
-  let resolveReady;
-  let rejectReady;
-  const ready = new Promise((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-  const state = {
-    child,
-    stdout,
-    stderr,
-    lines,
-    ready,
-    closed: new Promise((resolve) => child.once('close', resolve)),
-  };
-
-  lines.on('line', (line) => {
-    try {
-      const { msg, port } = JSON.parse(line);
-      if (msg === READY_MESSAGE && Number.isInteger(port) && port > 0) resolveReady(port);
-    } catch {
-      // Ignore non-JSON log lines.
-    }
-  });
-  child.once('error', rejectReady);
-  child.once('close', (code, signal) => {
-    rejectReady(new Error(`relay exited before readiness (code=${code}, signal=${signal})`));
-  });
-  return state;
-}
-
-function failure(error, state) {
-  const output = [state.stderr(), state.stdout()].filter(Boolean).join('\n');
-  return new Error([error.message, output].filter(Boolean).join('\n'));
-}
-
-async function waitForReady(state) {
   let timeout;
+  const ready = new Promise((resolve, reject) => {
+    lines.on('line', (line) => {
+      try {
+        const { msg, port } = JSON.parse(line);
+        if (msg === 'relay: listening' && Number.isInteger(port) && port > 0) resolve(port);
+      } catch {
+        // Ignore non-JSON log lines.
+      }
+    });
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      reject(new Error(`relay exited before readiness (code=${code}, signal=${signal})`));
+    });
+    timeout = setTimeout(() => reject(new Error('relay readiness timed out')), 10_000);
+  });
   try {
-    return await Promise.race([
-      state.ready,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('relay readiness timed out')), READY_TIMEOUT_MS);
-      }),
-    ]);
+    return await ready;
   } catch (error) {
-    throw failure(error, state);
+    throw new Error([error.message, stderr(), stdout()].filter(Boolean).join('\n'));
   } finally {
     clearTimeout(timeout);
+    lines.close();
   }
 }
 
-async function closeRelay(state, dataDir) {
-  const { child, closed } = state;
+async function closeRelay(child, closed, dataDir) {
+  let forceKill;
   if (child.pid && child.exitCode === null && child.signalCode === null) {
-    const forceKill = setTimeout(() => child.kill('SIGKILL'), 5000);
+    forceKill = setTimeout(() => child.kill('SIGKILL'), 5000);
     child.kill('SIGTERM');
-    try {
-      await closed;
-    } finally {
-      clearTimeout(forceKill);
-    }
-  } else {
-    await closed;
   }
-  state.lines.close();
-  await rm(dataDir, { recursive: true, force: true });
+  try {
+    await closed;
+  } finally {
+    clearTimeout(forceKill);
+    await rm(dataDir, { recursive: true, force: true });
+  }
 }
 
 export async function startRelay(options = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-test-'));
-  let state;
+  const env = { ...process.env };
+  for (const key of SANITIZED_ENV) delete env[key];
+  Object.assign(env, { HOST: '127.0.0.1', PORT: '0', ...options.env, PUSH_DATA_DIR: dataDir });
+  let child;
+  let closed;
   try {
     if (options.initialRecords) {
       await writeFile(path.join(dataDir, 'subscriptions.json'), JSON.stringify({ records: options.initialRecords }));
     }
-    state = spawnRelay({ ...options, dataDir });
-    const port = await waitForReady(state);
-    return {
-      port,
-      ...createHttpClient(`http://127.0.0.1:${port}`, () => closeRelay(state, dataDir)),
-    };
+    child = spawn(process.execPath, ['dist/server.js'], {
+      cwd: options.cwd ?? process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    closed = new Promise((resolve) => child.once('close', resolve));
+    const port = await waitForPort(child);
+    return createHttpClient(`http://127.0.0.1:${port}`, () => closeRelay(child, closed, dataDir));
   } catch (error) {
-    if (state) await closeRelay(state, dataDir);
+    if (child) await closeRelay(child, closed, dataDir);
     else await rm(dataDir, { recursive: true, force: true });
     throw error;
   }
