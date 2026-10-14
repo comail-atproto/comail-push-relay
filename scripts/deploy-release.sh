@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mode="${1:?install, seed, or rollback}"
+mode="${1:?install, seed, rollback, or observe}"
 target=production
-[[ "$mode" == install || "$mode" == seed || "$mode" == rollback ]]
+[[ "$mode" == install || "$mode" == seed || "$mode" == rollback || "$mode" == observe ]]
 test -n "${DEPLOY_KEY:-}" && test -n "${KNOWN_HOSTS:-}" && test -n "${DEPLOY_HOST:-}" && test -n "${DEPLOY_ORIGIN:-}"
 private_dir="$RUNNER_TEMP/comail-push-ssh-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 install -m 700 -d "$private_dir"
@@ -13,6 +13,89 @@ printf '%s\n' "$KNOWN_HOSTS" > "$private_dir/known_hosts"
 chmod 600 "$private_dir/key" "$private_dir/known_hosts"
 ssh_base=(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$private_dir/known_hosts" -i "$private_dir/key")
 remote="comail-push-relay-deploy@$DEPLOY_HOST"
+
+# Bound status reporting so monitoring cannot stall deployment checks or cleanup.
+run_observation_ssh() {
+  node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+const result = spawnSync(process.argv[1], process.argv.slice(2), {
+  timeout: 10000, maxBuffer: 16384,
+  input: process.argv.at(-1) === "report" ? readFileSync(0) : "",
+});
+if (result.error) process.exit(1);
+process.stdout.write(result.stdout);
+process.exit(result.status ?? 1);
+' "${ssh_base[@]}" -o ConnectTimeout=5 -o ConnectionAttempts=1 "$remote" "$1"
+}
+
+report_observation() {
+  local status="${receipt_status:-}" payload
+  if [[ "$mode" == observe || "$mode" == accept ]]; then
+    if ! status=$(run_observation_ssh status 2>/dev/null); then
+      echo 'Deployment status reporting unavailable' >&2
+      return 0
+    fi
+  elif [[ -z "$status" ]]; then
+    return 0
+  fi
+  if ! payload=$(RELEASE_STATUS="$status" RELEASE_OBSERVATION_STAGE="$1" \
+      RELEASE_OBSERVATION_RESULT="$2" RELEASE_OBSERVATION_SECONDS="$3" \
+      node --input-type=module 2>/dev/null <<'JS'
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+const status = JSON.parse(process.env.RELEASE_STATUS);
+if (status.observation_version !== 1) process.exit(0);
+const path = join(process.env.RUNNER_TEMP, "comail-release-receipt.json");
+if (statSync(path).size > 16384) throw new Error("receipt too large");
+const receipt = JSON.parse(readFileSync(path, "utf8"));
+const sequence = receipt.activation_sequence ?? receipt.workflow_run_number;
+if (!Number.isInteger(sequence) || sequence !== status.state.sequence || status.state.phase !== "complete" ||
+    status.state.release !== receipt.release_identity || status.active !== receipt.release_identity ||
+    status.archive_sha256 !== receipt.archive_sha256 || status.app !== receipt.app ||
+    status.environment !== receipt.environment || (status.role ?? status.app) !== (receipt.role ?? receipt.app)) {
+  throw new Error("receipt no longer matches selection");
+}
+const allowed = new Set([
+  "app", "environment", "role", "operation",
+  "release_identity", "source_sha", "archive_sha256", "previous",
+  "workflow_run_id", "source_run_id", "workflow_run_number", "workflow_run_attempt",
+  "activation_sequence", "serving_verified", "selection_verified", "acceptance",
+  "recovery", "recovery_drill",
+]);
+console.log(JSON.stringify({receipt: Object.fromEntries(Object.entries(receipt).filter(([key]) => allowed.has(key))),
+  stage: process.env.RELEASE_OBSERVATION_STAGE, result: process.env.RELEASE_OBSERVATION_RESULT,
+  observation_seconds: Number(process.env.RELEASE_OBSERVATION_SECONDS)}));
+JS
+  ); then
+    echo 'Deployment status reporting unavailable' >&2
+    return 0
+  fi
+  if [[ -n "$payload" ]] && ! run_observation_ssh report <<< "$payload" >/dev/null 2>&1; then
+    echo 'Deployment status reporting unavailable' >&2
+  fi
+  return 0
+}
+
+finish_release() {
+  local result=$?
+  trap - EXIT
+  if [[ "$mode" != observe && "$mode" != stage && -s "$RUNNER_TEMP/comail-release-receipt.json" ]]; then
+    local outcome=success
+    if (( result != 0 )); then outcome=failure; fi
+    report_observation complete "$outcome" 0
+  fi
+  rm -r "$private_dir"
+  return "$result"
+}
+trap finish_release EXIT
+
+if [[ "$mode" == observe ]]; then
+  report_observation "${RELEASE_OBSERVATION_STAGE:-complete}" "${RELEASE_OBSERVATION_RESULT:-success}" "${RELEASE_OBSERVATION_SECONDS:-0}"
+  exit 0
+fi
 
 if [[ "$mode" == install || "$mode" == seed ]]; then
   sha256sum -c release.sha256

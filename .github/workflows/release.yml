@@ -32,6 +32,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-fund
+      - name: Test optional deployment reporting
+        run: python3 -B scripts/test_release_observations.py
       - run: npm test
       - run: bash scripts/test-health-release.sh
       - run: npm audit --audit-level=high
