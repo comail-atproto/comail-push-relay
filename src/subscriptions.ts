@@ -6,7 +6,7 @@ import {
   subscriptionsUnregistered,
 } from './metrics.js';
 import type { SubscriptionStore } from './store.js';
-import type { FcmSubscriptionRecord, WebSubscriptionRecord } from './types.js';
+import type { FcmSubscriptionRecord, SubscriptionRecord, WebSubscriptionRecord } from './types.js';
 import {
   isValidFcmToken,
   isValidSubscriptionId,
@@ -21,19 +21,10 @@ interface SubscriptionLifecycleDependencies {
   getVapidPublicKey: () => string | null;
 }
 
-export interface SubscriptionLifecycle {
-  register(req: http.IncomingMessage, res: http.ServerResponse): Promise<void>;
-  registerWeb(req: http.IncomingMessage, res: http.ServerResponse): Promise<void>;
-  unregister(id: string, res: http.ServerResponse): Promise<void>;
-  verificationCode(id: string, res: http.ServerResponse): Promise<void>;
-  active(id: string, res: http.ServerResponse): Promise<void>;
-  refreshActiveGauge(): Promise<void>;
-}
-
 export function createSubscriptionLifecycle({
   store,
   getVapidPublicKey,
-}: SubscriptionLifecycleDependencies): SubscriptionLifecycle {
+}: SubscriptionLifecycleDependencies) {
   async function refreshActiveGauge(): Promise<void> {
     const counts = await store.sizeByKind();
     subscriptionsActive.set({ transport: 'fcm' }, counts.fcm);
@@ -102,24 +93,16 @@ export function createSubscriptionLifecycle({
   }
 
   async function verificationCode(id: string, res: http.ServerResponse): Promise<void> {
-    if (!isValidSubscriptionId(id)) {
-      return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-    }
-    const record = await store.get(id);
-    if (!record) {
-      return sendJson(res, 404, { error: 'Unknown subscription' });
-    }
+    const record = await findSubscription(store, id, res);
+    if (!record) return;
     return sendJson(res, 200, { verificationCode: record.verificationCode ?? null });
   }
 
   async function active(id: string, res: http.ServerResponse): Promise<void> {
-    if (!isValidSubscriptionId(id)) {
-      return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-    }
-    const record = await store.get(id);
+    const record = await findSubscription(store, id, res);
     if (!record) {
       // Unknown IDs may belong to another relay and must not be reaped.
-      return sendJson(res, 404, { error: 'Unknown subscription' });
+      return;
     }
     const isActive = record.lastPushAt != null || Date.now() - record.createdAt < ACTIVE_GRACE_MS;
     return sendJson(res, 200, { active: isActive });
@@ -128,15 +111,30 @@ export function createSubscriptionLifecycle({
   return { register, registerWeb, unregister, verificationCode, active, refreshActiveGauge };
 }
 
+export type SubscriptionLifecycle = ReturnType<typeof createSubscriptionLifecycle>;
+
+export async function findSubscription(
+  store: SubscriptionStore,
+  id: string,
+  res: http.ServerResponse,
+): Promise<SubscriptionRecord | null> {
+  if (!isValidSubscriptionId(id)) {
+    sendJson(res, 400, { error: 'Invalid subscriptionId' });
+    return null;
+  }
+  const record = await store.get(id);
+  if (!record) {
+    sendJson(res, 404, { error: 'Unknown subscription' });
+    return null;
+  }
+  return record;
+}
+
 interface RegistrationBody {
   subscriptionId?: unknown;
   fcmToken?: unknown;
   accountLabel?: unknown;
   subscription?: unknown;
-}
-
-function accountLabelValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value.slice(0, 120) : undefined;
 }
 
 async function registrationMetadata(
@@ -150,6 +148,6 @@ async function registrationMetadata(
     verificationCode: null,
     createdAt: existing?.createdAt ?? Date.now(),
     lastPushAt: existing?.lastPushAt ?? null,
-    accountLabel: accountLabelValue(accountLabel),
+    accountLabel: typeof accountLabel === 'string' ? accountLabel.slice(0, 120) : undefined,
   };
 }

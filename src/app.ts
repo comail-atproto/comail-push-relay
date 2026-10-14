@@ -1,44 +1,30 @@
 import http from 'node:http';
 import { createAccessApprovalHandler } from './access-approval.js';
-import type { DeliveryResult } from './delivery.js';
+import type { deliverAccessApproval, deliverStateChange } from './delivery.js';
 import { createJmapHandler } from './jmap.js';
 import { createRequestHandler } from './router.js';
 import type { SubscriptionStore } from './store.js';
 import { createSubscriptionLifecycle } from './subscriptions.js';
-import type { StateChange, SubscriptionRecord, WebSubscriptionRecord } from './types.js';
 
 export interface RelayDependencies {
   store: SubscriptionStore;
   getVapidPublicKey(): string | null;
-  deliverStateChange(record: SubscriptionRecord, change: StateChange): Promise<DeliveryResult>;
-  deliverAccessApproval(record: WebSubscriptionRecord): Promise<DeliveryResult>;
+  deliverStateChange: typeof deliverStateChange;
+  deliverAccessApproval: typeof deliverAccessApproval;
   releaseIdentity?: string;
 }
 
-export function createRelayServer({
-  store,
-  getVapidPublicKey,
-  deliverStateChange,
-  deliverAccessApproval,
-  releaseIdentity,
-}: RelayDependencies): http.Server {
-  const subscriptions = createSubscriptionLifecycle({ store, getVapidPublicKey });
-  const handleJmap = createJmapHandler({
-    store,
-    deliverStateChange,
-    refreshActiveGauge: subscriptions.refreshActiveGauge,
-  });
-  const handleAccessApproval = createAccessApprovalHandler({
-    store,
-    deliver: deliverAccessApproval,
-    refreshActiveGauge: subscriptions.refreshActiveGauge,
-  });
+export function createRelayServer(dependencies: RelayDependencies): http.Server {
+  const subscriptions = createSubscriptionLifecycle(dependencies);
+  const refreshActiveGauge = subscriptions.refreshActiveGauge;
   return http.createServer(createRequestHandler({
-    store,
+    ...dependencies,
     subscriptions,
-    handleJmap,
-    handleAccessApproval,
-    getVapidPublicKey,
-    releaseIdentity,
+    handleJmap: createJmapHandler({ ...dependencies, refreshActiveGauge }),
+    handleAccessApproval: createAccessApprovalHandler({
+      ...dependencies,
+      deliver: dependencies.deliverAccessApproval,
+      refreshActiveGauge,
+    }),
   }));
 }

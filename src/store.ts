@@ -4,9 +4,7 @@ import path from 'node:path';
 import { logger } from './logger.js';
 import type { SubscriptionRecord } from './types.js';
 
-// Aligned with the JMAP PushSubscription expires the mobile client requests
-// (90 days). The relay record gets refreshed on every push, so this only
-// matters for users who go quiet for ~3 months.
+// Match the client's 90-day expiry; each push refreshes this record.
 const TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 function getPushDir(dataDir?: string): string {
@@ -47,17 +45,14 @@ export class FileSubscriptionStore implements SubscriptionStore {
       const raw = await readFile(subscriptionsPath(this.dataDir), 'utf-8');
       const parsed = JSON.parse(raw) as SubscriptionsFile;
       this.cache = createRecords(parsed.records ?? {});
-      this.migrateLegacyRecords();
-      this.evictExpired();
+      this.normalizeRecords();
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.cache = createRecords();
-      } else {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         logger.warn('store: failed to read subscriptions', {
           error: error instanceof Error ? error.message : 'Unknown error',
         });
-        this.cache = createRecords();
       }
+      this.cache = createRecords();
     }
     this.loaded = true;
   }
@@ -117,19 +112,12 @@ export class FileSubscriptionStore implements SubscriptionStore {
     return age > TTL_MS;
   }
 
-  private evictExpired(): void {
+  private normalizeRecords(): void {
     for (const [id, record] of Object.entries(this.cache)) {
+      const legacy = record as Partial<SubscriptionRecord> & { fcmToken?: string };
+      // Old disk records lack kind and are FCM subscriptions.
+      if (!legacy.kind && typeof legacy.fcmToken === 'string') legacy.kind = 'fcm';
       if (this.isExpired(record)) delete this.cache[id];
-    }
-  }
-
-  // Older disk records lack a kind; treat them as FCM records.
-  private migrateLegacyRecords(): void {
-    for (const [id, record] of Object.entries(this.cache)) {
-      const r = record as Partial<SubscriptionRecord> & { fcmToken?: string };
-      if (!r.kind && typeof r.fcmToken === 'string') {
-        this.cache[id] = { ...(r as object), kind: 'fcm' } as SubscriptionRecord;
-      }
     }
   }
 

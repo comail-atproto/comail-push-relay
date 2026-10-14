@@ -1,10 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { FcmSubscriptionRecord, StateChange } from './types.js';
+import type { DeliveryResult, FcmSubscriptionRecord, StateChange } from './types.js';
 
 interface ServiceAccount {
-  type: string;
   project_id: string;
   private_key_id: string;
   private_key: string;
@@ -33,10 +32,7 @@ async function loadServiceAccount(): Promise<ServiceAccount> {
   return cachedAccount;
 }
 
-function base64url(buf: Buffer | string): string {
-  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+const base64url = (value: Buffer | string) => Buffer.from(value).toString('base64url');
 
 async function mintAccessToken(): Promise<string> {
   const now = Date.now();
@@ -45,13 +41,14 @@ async function mintAccessToken(): Promise<string> {
   }
 
   const account = await loadServiceAccount();
+  const tokenUri = account.token_uri ?? 'https://oauth2.googleapis.com/token';
   const iat = Math.floor(now / 1000);
   const exp = iat + 3600;
   const header = { alg: 'RS256', typ: 'JWT', kid: account.private_key_id };
   const claim = {
     iss: account.client_email,
     scope: 'https://www.googleapis.com/auth/firebase.messaging',
-    aud: account.token_uri ?? 'https://oauth2.googleapis.com/token',
+    aud: tokenUri,
     iat,
     exp,
   };
@@ -62,7 +59,7 @@ async function mintAccessToken(): Promise<string> {
     .sign(account.private_key);
   const jwt = `${signingInput}.${base64url(signature)}`;
 
-  const res = await fetch(account.token_uri ?? 'https://oauth2.googleapis.com/token', {
+  const res = await fetch(tokenUri, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -81,21 +78,13 @@ async function mintAccessToken(): Promise<string> {
   return body.access_token;
 }
 
-export interface FcmSendResult {
-  ok: boolean;
-  status: number;
-  unregistered: boolean;
-  body?: unknown;
-}
-
 export async function sendFcmPush(
   record: FcmSubscriptionRecord,
   change: StateChange,
-): Promise<FcmSendResult> {
+): Promise<DeliveryResult & { body?: unknown }> {
   const account = await loadServiceAccount();
   const accessToken = await mintAccessToken();
-  // Data-only push so onMessageReceived always fires — the app enriches it
-  // (sender/subject/avatar) via JMAP fetch before posting a notification.
+  // Data-only: the app fetches notification details through JMAP.
   const message = {
     message: {
       token: record.fcmToken,

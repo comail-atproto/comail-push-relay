@@ -9,12 +9,14 @@ import {
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry, prefix: 'relay_' });
 
-export const httpRequestsTotal = new Counter({
-  name: 'relay_http_requests_total',
-  help: 'HTTP requests served by route + status',
-  labelNames: ['method', 'route', 'status'] as const,
-  registers: [registry],
-});
+const counter = <Label extends string>(name: string, help: string, labelNames: Label[]) =>
+  new Counter<Label>({ name, help, labelNames, registers: [registry] });
+
+export const httpRequestsTotal = counter(
+  'relay_http_requests_total',
+  'HTTP requests served by route + status',
+  ['method', 'route', 'status'],
+);
 
 export const httpDurationSeconds = new Histogram({
   name: 'relay_http_request_duration_seconds',
@@ -24,19 +26,17 @@ export const httpDurationSeconds = new Histogram({
   registers: [registry],
 });
 
-export const subscriptionsRegistered = new Counter({
-  name: 'relay_subscriptions_registered_total',
-  help: 'Subscription register calls (new or refreshed token), by transport',
-  labelNames: ['transport'] as const,
-  registers: [registry],
-});
+export const subscriptionsRegistered = counter(
+  'relay_subscriptions_registered_total',
+  'Subscription register calls (new or refreshed token), by transport',
+  ['transport'],
+);
 
-export const subscriptionsUnregistered = new Counter({
-  name: 'relay_subscriptions_unregistered_total',
-  help: 'Subscription deletions, by reason and transport',
-  labelNames: ['reason', 'transport'] as const,
-  registers: [registry],
-});
+export const subscriptionsUnregistered = counter(
+  'relay_subscriptions_unregistered_total',
+  'Subscription deletions, by reason and transport',
+  ['reason', 'transport'],
+);
 
 export const subscriptionsActive = new Gauge({
   name: 'relay_subscriptions_active',
@@ -45,26 +45,23 @@ export const subscriptionsActive = new Gauge({
   registers: [registry],
 });
 
-export const pushesReceived = new Counter({
-  name: 'relay_pushes_received_total',
-  help: 'JMAP push bodies received from Stalwart',
-  labelNames: ['type'] as const,
-  registers: [registry],
-});
+export const pushesReceived = counter(
+  'relay_pushes_received_total',
+  'JMAP push bodies received from Stalwart',
+  ['type'],
+);
 
-export const pushesForwarded = new Counter({
-  name: 'relay_pushes_forwarded_total',
-  help: 'Push forwarding outcomes by transport',
-  labelNames: ['result', 'transport'] as const,
-  registers: [registry],
-});
+export const pushesForwarded = counter(
+  'relay_pushes_forwarded_total',
+  'Push forwarding outcomes by transport',
+  ['result', 'transport'],
+);
 
-export const accessApprovalPushes = new Counter({
-  name: 'relay_access_approval_pushes_total',
-  help: 'Authenticated access-approval wake-up dispatch outcomes',
-  labelNames: ['result'] as const,
-  registers: [registry],
-});
+export const accessApprovalPushes = counter(
+  'relay_access_approval_pushes_total',
+  'Authenticated access-approval wake-up dispatch outcomes',
+  ['result'],
+);
 
 export const fcmDurationSeconds = new Histogram({
   name: 'relay_fcm_send_duration_seconds',

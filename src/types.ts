@@ -41,3 +41,9 @@ export interface StateChange {
 }
 
 export type JmapPushBody = PushVerification | StateChange;
+
+export interface DeliveryResult {
+  ok: boolean;
+  status: number;
+  unregistered: boolean;
+}

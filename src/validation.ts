@@ -13,9 +13,7 @@ export function isValidFcmToken(value: unknown): value is string {
   );
 }
 
-// Browser PushSubscription endpoints come from the major push services
-// (FCM, Mozilla autopush, Apple, WindowsNotificationServices). Allow only
-// https URLs and cap the length so a malicious caller can't bloat the store.
+// Persist only bounded HTTPS endpoints and keys.
 export function isValidWebPushSubscription(value: unknown): value is WebPushSubscription {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;

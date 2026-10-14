@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import { logger } from './logger.js';
-import type { StateChange, WebSubscriptionRecord } from './types.js';
+import type { DeliveryResult, StateChange, WebSubscriptionRecord } from './types.js';
 
 let configured = false;
 let publicKey: string | null = null;
@@ -11,9 +11,7 @@ function ensureConfigured(): boolean {
 
   const pub = process.env.VAPID_PUBLIC_KEY?.trim();
   const priv = process.env.VAPID_PRIVATE_KEY?.trim();
-  // RFC 8292 requires a contact - mailto: or https: URL the push service can
-  // reach if our pushes start misbehaving. Default to a sensible self-host
-  // hint so dev deployments still work without explicit config.
+  // RFC 8292 requires a contact URL; use a local default for development.
   const subject = process.env.VAPID_SUBJECT?.trim() || 'mailto:postmaster@localhost';
 
   if (!pub || !priv) {
@@ -31,16 +29,10 @@ export function getVapidPublicKey(): string | null {
   return publicKey;
 }
 
-export interface WebPushSendResult {
-  ok: boolean;
-  status: number;
-  unregistered: boolean;
-}
-
 export async function sendWebPush(
   record: WebSubscriptionRecord,
   change: StateChange,
-): Promise<WebPushSendResult> {
+): Promise<DeliveryResult> {
   return sendWebPushPayload(record, {
     kind: 'jmap-state-change',
     accountLabel: record.accountLabel ?? '',
@@ -52,7 +44,7 @@ export async function sendWebPushPayload(
   record: WebSubscriptionRecord,
   payload: Readonly<Record<string, unknown>>,
   options: { ttl?: number; topic?: string } = {},
-): Promise<WebPushSendResult> {
+): Promise<DeliveryResult> {
   if (!ensureConfigured()) {
     return { ok: false, status: 0, unregistered: false };
   }
@@ -66,8 +58,7 @@ export async function sendWebPushPayload(
     return { ok: true, status: res.statusCode, unregistered: false };
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode ?? 0;
-    // 404 / 410 mean the push service has dropped the subscription -
-    // mirrors the FCM UNREGISTERED branch so the caller deletes the record.
+    // 404/410 mean the provider dropped the subscription.
     const unregistered = status === 404 || status === 410;
     return { ok: false, status, unregistered };
   }

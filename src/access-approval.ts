@@ -3,15 +3,14 @@ import type http from 'node:http';
 import { sendJson, readJson } from './http.js';
 import { accessApprovalPushes, subscriptionsUnregistered } from './metrics.js';
 import type { SubscriptionStore } from './store.js';
-import type { WebSubscriptionRecord } from './types.js';
+import type { deliverAccessApproval } from './delivery.js';
 import { isValidSubscriptionId } from './validation.js';
-import type { DeliveryResult } from './delivery.js';
 
 const MAX_SUBSCRIPTIONS = 16;
 
 export interface AccessApprovalHandlerDependencies {
   store: SubscriptionStore;
-  deliver(record: WebSubscriptionRecord): Promise<DeliveryResult>;
+  deliver: typeof deliverAccessApproval;
   refreshActiveGauge(): Promise<void>;
 }
 

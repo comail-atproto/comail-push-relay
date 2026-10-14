@@ -2,13 +2,13 @@ import type http from 'node:http';
 import { sendJson, readJson } from './http.js';
 import { pushesForwarded, pushesReceived, subscriptionsUnregistered } from './metrics.js';
 import type { SubscriptionStore } from './store.js';
-import type { JmapPushBody, StateChange, SubscriptionRecord } from './types.js';
-import { isValidSubscriptionId } from './validation.js';
-import type { DeliveryResult } from './delivery.js';
+import { findSubscription } from './subscriptions.js';
+import type { deliverStateChange } from './delivery.js';
+import type { DeliveryResult, JmapPushBody } from './types.js';
 
 export interface JmapHandlerDependencies {
   store: SubscriptionStore;
-  deliverStateChange(record: SubscriptionRecord, change: StateChange): Promise<DeliveryResult>;
+  deliverStateChange: typeof deliverStateChange;
   refreshActiveGauge(): Promise<void>;
 }
 
@@ -22,13 +22,8 @@ export function createJmapHandler({
     id: string,
     res: http.ServerResponse,
   ): Promise<void> {
-    if (!isValidSubscriptionId(id)) {
-      return sendJson(res, 400, { error: 'Invalid subscriptionId' });
-    }
-    const record = await store.get(id);
-    if (!record) {
-      return sendJson(res, 404, { error: 'Unknown subscription' });
-    }
+    const record = await findSubscription(store, id, res);
+    if (!record) return;
     const body = (await readJson(req)) as JmapPushBody | null | undefined;
     if (!body || typeof body !== 'object' || typeof body['@type'] !== 'string') {
       return sendJson(res, 400, { error: 'Invalid JMAP push body' });
