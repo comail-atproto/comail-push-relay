@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { deliverStateChange } from '../dist/delivery.js';
+import { pushesForwarded } from '../dist/metrics.js';
 import { startTestRelay } from './handler-fixtures.mjs';
 import {
+  mockWebPush,
   WEB_PUSH_PUBLIC_KEY,
   WEB_SUBSCRIPTION,
 } from './web-push-fixture.mjs';
@@ -19,11 +22,16 @@ const verification = (code) => ({
 test('registration, StateChange, refresh, transport switches, and delete persist together', async (t) => {
   const createdAt = 1_700_000_000_000;
   const activeGraceMs = 10 * 60 * 1000;
+  const webSubscription = {
+    ...WEB_SUBSCRIPTION,
+    endpoint: `${WEB_SUBSCRIPTION.endpoint}/201`,
+  };
   let now = createdAt;
   t.mock.method(Date, 'now', () => now);
+  mockWebPush(t);
   const relay = await startTestRelay(t, {
     getVapidPublicKey: () => WEB_PUSH_PUBLIC_KEY,
-    async deliverStateChange() { return { ok: true, status: 201, unregistered: false }; },
+    deliverStateChange,
   });
 
   const read = async () => (await relay.readRecords())[ID];
@@ -32,13 +40,13 @@ test('registration, StateChange, refresh, transport switches, and delete persist
     '@type': 'StateChange',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: 'state-42' } },
   };
-  assert.deepEqual(await relay.post('/api/push/register', {
+  assert.deepEqual(await relay.post('/api/push/register/web', {
     subscriptionId: ID,
-    fcmToken: FCM_TOKEN,
-    accountLabel: 'f'.repeat(140),
+    subscription: webSubscription,
+    accountLabel: 'initial',
   }), ok);
   const original = await read();
-  assert.equal(original.accountLabel, 'f'.repeat(120));
+  assert.equal(original.accountLabel, 'initial');
   assert.equal(original.createdAt, createdAt);
   assert.deepEqual(await relay.post(`/api/push/jmap/${ID}`, verification('123456')), ok);
   now = createdAt + activeGraceMs - 1;
@@ -48,6 +56,8 @@ test('registration, StateChange, refresh, transport switches, and delete persist
   now += 1;
   const pushedAt = now;
   assert.deepEqual(await relay.post(`/api/push/jmap/${ID}`, stateChange), { status: 200, body: { ok: true } });
+  const { values } = await pushesForwarded.get();
+  assert.equal(values.find(({ labels }) => labels.transport === 'web' && labels.result === 'ok')?.value, 1);
   const pushed = await read();
   assert.equal(pushed.verificationCode, '123456');
   assert.equal(pushed.lastPushAt, pushedAt);
@@ -55,24 +65,19 @@ test('registration, StateChange, refresh, transport switches, and delete persist
 
   const transitions = [
     {
-      name: 'FCM refresh', route: '/api/push/register',
-      body: { fcmToken: 'g'.repeat(64), accountLabel: 'f'.repeat(140) },
-      kind: 'fcm', label: 'f'.repeat(120),
-    },
-    {
-      name: 'FCM to Web Push', route: '/api/push/register/web',
-      body: { subscription: WEB_SUBSCRIPTION, accountLabel: 'w'.repeat(140) },
-      kind: 'web', label: 'w'.repeat(120),
-    },
-    {
       name: 'Web Push refresh', route: '/api/push/register/web',
-      body: { subscription: WEB_SUBSCRIPTION, accountLabel: 'refreshed' },
+      body: { subscription: webSubscription, accountLabel: 'refreshed' },
       kind: 'web', label: 'refreshed',
     },
     {
       name: 'Web Push to FCM', route: '/api/push/register',
-      body: { fcmToken: FCM_TOKEN, accountLabel: 'mobile' },
-      kind: 'fcm', label: 'mobile',
+      body: { fcmToken: FCM_TOKEN, accountLabel: 'f'.repeat(140) },
+      kind: 'fcm', label: 'f'.repeat(120),
+    },
+    {
+      name: 'FCM to Web Push', route: '/api/push/register/web',
+      body: { subscription: webSubscription, accountLabel: 'w'.repeat(140) },
+      kind: 'web', label: 'w'.repeat(120),
     },
   ];
   for (const transition of transitions) {

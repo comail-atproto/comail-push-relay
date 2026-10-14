@@ -32,7 +32,7 @@ test('access-approval checks bearer, payload, and unique missing IDs', async (t)
     ['missing bearer', approval(['missing_123']), undefined, 401, 'Unauthorized'],
     ['wrong bearer', approval(['missing_123']), 'Bearer wrong', 401, 'Unauthorized'],
     ['same-length wrong bearer', approval(['missing_123']), `Bearer ${'b'.repeat(TOKEN.length)}`, 401, 'Unauthorized'],
-    ['non-bearer scheme', approval(['missing_123']), `Token ${TOKEN}`, 401, 'Unauthorized'],
+    ['non-bearer scheme', approval(['missing_123']), `Digest ${TOKEN}`, 401, 'Unauthorized'],
     ['wrong kind', { kind: 'other', subscriptionIds: ['missing_123'] }, bearer, 400, 'Invalid access approval dispatch'],
     ['empty IDs', approval([]), bearer, 400, 'Invalid access approval dispatch'],
     ['more than 16 IDs', approval(Array.from({ length: 17 }, (_, i) => `subscription_${i}`)), bearer, 400, 'Invalid access approval dispatch'],

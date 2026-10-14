@@ -1,29 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import webpush from 'web-push';
 
 import { deliverAccessApproval } from '../dist/delivery.js';
 import { record, startTestRelay } from './handler-fixtures.mjs';
-import { WEB_PUSH_ENV } from './web-push-fixture.mjs';
+import { mockWebPush, webPushRecord } from './web-push-fixture.mjs';
 
 const TOKEN = 'a'.repeat(40);
 
-function webPushRecord(accountLabel, status) {
-  const subscription = record('web', { accountLabel });
-  subscription.webPush.endpoint += `/${status}`;
-  return subscription;
-}
-
 test('access-approval reports mixed outcomes once per ID and updates only successful records', async (t) => {
-  const env = { ACCESS_APPROVAL_DISPATCH_TOKEN: TOKEN, ...WEB_PUSH_ENV };
-  const previousEnv = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-  Object.assign(process.env, env);
-  t.after(() => {
-    for (const [name, value] of Object.entries(previousEnv)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  });
+  const sent = mockWebPush(t, { ACCESS_APPROVAL_DISPATCH_TOKEN: TOKEN });
 
   const ids = {
     delivered: 'subscription_delivered_1',
@@ -42,17 +27,6 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     [ids.removed, removedRecord],
     [ids.failed, failedRecord],
   ]);
-  const sent = [];
-  t.mock.method(webpush, 'sendNotification', async (subscription, payload, options) => {
-    sent.push({ subscription: structuredClone(subscription), payload, options });
-    if (subscription.endpoint.endsWith('/410')) {
-      throw Object.assign(new Error('gone'), { statusCode: 410 });
-    }
-    if (subscription.endpoint.endsWith('/503')) {
-      throw Object.assign(new Error('unavailable'), { statusCode: 503 });
-    }
-    return { statusCode: 201 };
-  });
   const relay = await startTestRelay(t, {
     records,
     deliverAccessApproval,
@@ -87,7 +61,7 @@ test('access-approval reports mixed outcomes once per ID and updates only succes
     deliveredRecord.webPush, removedRecord.webPush, failedRecord.webPush,
   ]);
   for (const { payload, options } of sent) {
-    assert.deepEqual(JSON.parse(payload), { kind: 'access-approval' });
+    assert.deepEqual(payload, { kind: 'access-approval' });
     assert.deepEqual(options, { TTL: 120, urgency: 'high', topic: 'comail-access-approval' });
   }
   const stored = await relay.readRecords();

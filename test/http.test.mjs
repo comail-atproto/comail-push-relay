@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { startTestRelay } from './handler-fixtures.mjs';
+import { record, startTestRelay } from './handler-fixtures.mjs';
 
 test('HTTP contracts for public routes, CORS, malformed IDs, and body limits', async (t) => {
-  const relay = await startTestRelay(t);
+  const deliveryFailureId = 'subscription_delivery_fail';
+  const relay = await startTestRelay(t, {
+    records: { [deliveryFailureId]: record('fcm') },
+  });
 
   await t.test('public routes and CORS preflight', async () => {
     const html = await relay.request('/', { headers: { accept: 'text/html' } });
@@ -54,6 +57,14 @@ test('HTTP contracts for public routes, CORS, malformed IDs, and body limits', a
         assert.deepEqual(response, { status: 500, body: { error: 'Internal server error' } });
       });
     }
+  });
+
+  await t.test('JMAP delivery failure returns 500 without updating the record', async () => {
+    assert.deepEqual(await relay.post(`/api/push/jmap/${deliveryFailureId}`, {
+      '@type': 'StateChange',
+      changed: {},
+    }), { status: 500, body: { error: 'Internal server error' } });
+    assert.equal((await relay.readRecords())[deliveryFailureId].lastPushAt, null);
   });
 
   await t.test('request bodies accept the limit and close over-limit connections', { timeout: 3000 }, async () => {

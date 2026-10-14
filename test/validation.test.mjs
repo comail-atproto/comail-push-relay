@@ -7,52 +7,43 @@ import {
   isValidWebPushSubscription,
 } from '../dist/validation.js';
 
-test('subscription IDs enforce independent length and character bounds', () => {
-  for (const [value, valid] of [
-    ['a'.repeat(8), true],
-    ['a'.repeat(7), false],
-    ['a'.repeat(128), true],
-    ['a'.repeat(129), false],
-    ['a'.repeat(127) + '!', false],
-  ]) {
-    assert.equal(isValidSubscriptionId(value), valid, `ID length ${value.length}`);
-  }
-});
-
-test('FCM tokens enforce independent length and character bounds', () => {
-  for (const [value, valid] of [
-    ['f'.repeat(64), true],
-    ['f'.repeat(63), false],
-    ['f'.repeat(4096), true],
-    ['f'.repeat(4097), false],
-    ['f'.repeat(63) + '!', false],
-  ]) {
-    assert.equal(isValidFcmToken(value), valid, `token length ${value.length}`);
+test('subscription IDs and FCM tokens enforce independent bounds', () => {
+  const cases = [
+    { name: 'ID', validate: isValidSubscriptionId, char: 'a', min: 8, max: 128, invalid: '!' },
+    { name: 'FCM token', validate: isValidFcmToken, char: 'f', min: 64, max: 4096, invalid: '!' },
+  ];
+  for (const { name, validate, char, min, max, invalid } of cases) {
+    for (const [length, valid] of [[min, true], [min - 1, false], [max, true], [max + 1, false]]) {
+      assert.equal(validate(char.repeat(length)), valid, `${name} length ${length}`);
+    }
+    assert.equal(validate(char.repeat(min - 1) + invalid), false, `${name} character set`);
   }
 });
 
 test('Web Push fields enforce independent length and scheme bounds', () => {
-  for (const [field, value, valid] of [
-    ['endpoint', 'https://ab', true],
-    ['endpoint', 'https://a', false],
-    ['endpoint', 'https://'.padEnd(2048, 'e'), true],
-    ['endpoint', 'https://'.padEnd(2049, 'e'), false],
-    ['p256dh', 'p'.repeat(64), true],
-    ['p256dh', 'p'.repeat(63), false],
-    ['p256dh', 'p'.repeat(256), true],
-    ['p256dh', 'p'.repeat(257), false],
-    ['auth', 'a'.repeat(16), true],
-    ['auth', 'a'.repeat(15), false],
-    ['auth', 'a'.repeat(64), true],
-    ['auth', 'a'.repeat(65), false],
-    ['endpoint', 'http://push.example.test', false],
-  ]) {
-    const subscription = {
-      endpoint: 'https://push.example.test',
-      keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
-    };
-    if (field === 'endpoint') subscription.endpoint = value;
-    else subscription.keys[field] = value;
-    assert.equal(isValidWebPushSubscription(subscription), valid, `${field} length ${value.length}`);
+  const fields = [
+    ['endpoint', 10, 2048, (subscription, length) => {
+      subscription.endpoint = 'https://'.padEnd(length, 'e');
+    }],
+    ['p256dh', 64, 256, (subscription, length) => {
+      subscription.keys.p256dh = 'p'.repeat(length);
+    }],
+    ['auth', 16, 64, (subscription, length) => {
+      subscription.keys.auth = 'a'.repeat(length);
+    }],
+  ];
+  for (const [field, min, max, setLength] of fields) {
+    for (const [length, valid] of [[min, true], [min - 1, false], [max, true], [max + 1, false]]) {
+      const subscription = {
+        endpoint: 'https://push.example.test',
+        keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
+      };
+      setLength(subscription, length);
+      assert.equal(isValidWebPushSubscription(subscription), valid, `${field} length ${length}`);
+    }
   }
+  assert.equal(isValidWebPushSubscription({
+    endpoint: 'http://push.example.test',
+    keys: { p256dh: 'p'.repeat(64), auth: 'a'.repeat(16) },
+  }), false, 'endpoint scheme');
 });
