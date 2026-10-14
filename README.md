@@ -96,3 +96,18 @@ automatic deployment. Manual release and rollback keep their existing protected
 `main` workflow. See the [deployment controls and migration guide](https://github.com/comail-atproto/comail-infra/blob/main/docs/app-releases.md#deployment-controls).
 
 This workflow has no staging target; keep `COMAIL_DEPLOY_STAGING_ENABLED=false`.
+
+## Deployment status
+
+The deployment script reports the deployed version, build ID, CI run, health
+checks, and final result to the deployment dashboard. Reporting runs after the
+normal deployment and rollback commands. Older hosts skip it; a reporting error
+warns without changing the deployment result. It sends deployment metadata only,
+without credentials, private mail, or raw logs.
+
+CI can report a check in progress by running the existing deployment command with
+`observe` and setting `RELEASE_OBSERVATION_STAGE`, `RELEASE_OBSERVATION_RESULT`,
+and `RELEASE_OBSERVATION_SECONDS`. Stages are `health`, `mail`, `monitoring`, or
+`complete`; results are `running`, `success`, `failure`, or `cancelled`.
+The host checks the build ID and deployment sequence before recording the report.
+A successful health check does not count as mail acceptance.
