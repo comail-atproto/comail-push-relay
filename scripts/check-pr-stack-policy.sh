@@ -38,31 +38,36 @@ if [[ "$head_repo" != "$base_repo" ]]; then
   exit 0
 fi
 
-stack_filter='type == "object" and
+stack_filter='def valid_stack: type == "object" and
   (.number | type == "number") and .number > 0 and .number == (.number | floor) and
   (.position | type == "number") and .position > 0 and .position == (.position | floor) and
   (.size | type == "number") and .size >= .position and .size == (.size | floor) and
-  (.base.ref | type == "string" and length > 0)'
-if jq -e ".pull_request.stack | $stack_filter" "$event_path" >/dev/null; then
+  (.base.ref | type == "string" and length > 0);'
+if jq -e "$stack_filter .pull_request.stack | valid_stack" "$event_path" >/dev/null; then
   echo "ok: pull request #$number has first-class GitHub stack metadata"
   exit 0
 fi
 
-if [[ -n "${COMAIL_PR_STACK_OPEN_PULLS_JSON+x}" ]]; then
-  open_pulls="$COMAIL_PR_STACK_OPEN_PULLS_JSON"
-else
-  github_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+github_get() {
+  local fail_flag="$1" route="$2"
+  local github_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -z "$github_token" || "${#github_token}" -gt 16384 || "$github_token" == *$'\n'* || "$github_token" == *$'\r'* ]]; then
     echo "pull request stack policy requires a bounded GitHub token" >&2
     exit 1
   fi
-  owner="${repo%%/*}"
-  head_query="$(jq -rn --arg value "$owner:$base_ref" '$value | @uri')"
-  open_pulls="$(curl --fail-with-body --silent --show-error --max-time 30 \
+  curl "$fail_flag" --silent --show-error --max-time 30 \
     --header "Accept: application/vnd.github+json" \
     --header "Authorization: Bearer $github_token" \
     --header "X-GitHub-Api-Version: 2022-11-28" \
-    "https://api.github.com/repos/$repo/pulls?state=open&head=$head_query&per_page=100")"
+    "https://api.github.com/repos/$repo/$route"
+}
+
+if [[ -n "${COMAIL_PR_STACK_OPEN_PULLS_JSON+x}" ]]; then
+  open_pulls="$COMAIL_PR_STACK_OPEN_PULLS_JSON"
+else
+  owner="${repo%%/*}"
+  head_query="$(jq -rn --arg value "$owner:$base_ref" '$value | @uri')"
+  open_pulls="$(github_get --fail-with-body "pulls?state=open&head=$head_query&per_page=100")"
 fi
 
 if ! jq -e 'type == "array"' <<< "$open_pulls" >/dev/null; then
@@ -81,31 +86,15 @@ if jq -e \
   if [[ -n "${COMAIL_PR_STACK_CURRENT_PULL_JSON+x}" ]]; then
     current_pull="$COMAIL_PR_STACK_CURRENT_PULL_JSON"
   else
-    github_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-    if [[ -z "$github_token" || "${#github_token}" -gt 16384 || "$github_token" == *$'\n'* || "$github_token" == *$'\r'* ]]; then
-      echo "pull request stack policy requires a bounded GitHub token" >&2
-      exit 1
-    fi
-    current_pull="$(curl --fail --silent --show-error --max-time 30 \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $github_token" \
-      --header "X-GitHub-Api-Version: 2022-11-28" \
-      "https://api.github.com/repos/$repo/pulls/$number")"
+    current_pull="$(github_get --fail "pulls/$number")"
   fi
   head_sha="$(jq -er '.pull_request.head.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$event_path")"
   if jq -e --arg repo "$repo" --arg base_ref "$base_ref" \
     --arg head_sha "$head_sha" --argjson number "$number" \
-    'type == "object" and .number == $number and
+    "$stack_filter"' type == "object" and .number == $number and
      .head.repo.full_name == $repo and .head.sha == $head_sha and
      .base.repo.full_name == $repo and .base.ref == $base_ref and
-     (.stack | type == "object") and
-     (.stack.number | type == "number") and .stack.number > 0 and
-     .stack.number == (.stack.number | floor) and
-     (.stack.position | type == "number") and .stack.position > 0 and
-     .stack.position == (.stack.position | floor) and
-     (.stack.size | type == "number") and .stack.size >= .stack.position and
-     .stack.size == (.stack.size | floor) and
-     (.stack.base.ref | type == "string" and length > 0)' \
+     (.stack | valid_stack)' \
     <<< "$current_pull" >/dev/null; then
     echo "ok: pull request #$number has live first-class stack metadata for this revision"
     exit 0
