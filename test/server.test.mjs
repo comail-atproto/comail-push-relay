@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -222,4 +223,63 @@ test('access-approval dispatch enforces authorization and payload shape', async 
       assert.deepEqual(response, c.want);
     });
   }
+});
+
+test('stock EmailPush reloads existing subscriptions without exposing mail content', async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-existing-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  await writeFile(path.join(dataDir, 'subscriptions.json'), JSON.stringify({ records: {
+    [SUBSCRIPTION_ID]: {
+      kind: 'web', verificationCode: 'existing-code', createdAt: Date.now(), lastPushAt: null,
+      webPush: { endpoint: 'https://push.example.com/synthetic', keys: { p256dh: 'p', auth: 'a' } },
+    },
+  } }));
+  const relay = await startRelay({ dataDir });
+  t.after(() => relay.stop());
+  assert.deepEqual(await relay.post(`/api/push/jmap/${SUBSCRIPTION_ID}`, {
+    '@type': 'EmailPush', accountId: 'synthetic-account', state: '42',
+    emails: [{ id: 'synthetic-message', subject: 'private-subject-canary', body: 'private-body-canary' }],
+  }), { status: 200, body: { ok: false } });
+  assert.doesNotMatch(relay.stdout() + relay.stderr(), /private-subject-canary|private-body-canary/);
+  await relay.stop();
+  const restarted = await startRelay({ dataDir });
+  t.after(() => restarted.stop());
+  assert.deepEqual(await restarted.json(`/api/push/verify/${SUBSCRIPTION_ID}`), {
+    status: 200, body: { verificationCode: 'existing-code' },
+  });
+  assert.deepEqual(await restarted.json(`/api/push/active/${SUBSCRIPTION_ID}`), {
+    status: 200, body: { active: true },
+  });
+});
+
+test('approval dispatch shares the stock store and removes only expired subscriptions', async (t) => {
+  const { default: webpush } = await import('web-push');
+  const keys = webpush.generateVAPIDKeys();
+  const relay = await startRelay({
+    nodeArgs: ['--import', './test/webpush-fixture.mjs'],
+    env: {
+      ACCESS_APPROVAL_DISPATCH_TOKEN: DISPATCH_TOKEN,
+      VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey,
+    },
+  });
+  t.after(() => relay.stop());
+  const ids = ['delivered', 'gone', 'retry'].map((result) => `subscription_${result}`);
+  for (const result of ['delivered', 'gone', 'retry']) {
+    assert.equal((await relay.post('/api/push/register/web', {
+      subscriptionId: `subscription_${result}`,
+      subscription: {
+        endpoint: `https://push.example.com/${result}`,
+        keys: { p256dh: keys.publicKey, auth: 'a'.repeat(22) },
+      },
+    })).status, 200);
+  }
+  assert.deepEqual(await relay.post('/api/push/internal/access-approval', {
+    kind: 'access-approval', subscriptionIds: [...ids, ids[0], 'subscription_missing'],
+  }, `Bearer ${DISPATCH_TOKEN}`), {
+    status: 200, body: { ok: false, delivered: 1, missing: 1, removed: 1, failed: 1 },
+  });
+  const persisted = JSON.parse(await readFile(path.join(relay.dataDir, 'subscriptions.json'), 'utf8'));
+  assert.ok(persisted.records.subscription_delivered.lastPushAt > 0);
+  assert.equal(persisted.records.subscription_gone, undefined);
+  assert.equal(persisted.records.subscription_retry.lastPushAt, null);
 });

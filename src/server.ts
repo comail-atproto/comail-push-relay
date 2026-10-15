@@ -1,21 +1,25 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
-import { logger } from './logger.js';
-import { subscriptionStore } from './store.js';
-import { sendFcmPush } from './fcm.js';
-import { getVapidPublicKey, sendWebPush, sendWebPushPayload } from './webpush.js';
+import { logger } from 'bulwark-relay/dist/logger.js';
+import { subscriptionStore } from 'bulwark-relay/dist/store.js';
+import { sendFcmPush } from 'bulwark-relay/dist/fcm.js';
+import { getVapidPublicKey, sendWebPush } from 'bulwark-relay/dist/webpush.js';
+import { sendUnifiedPush } from 'bulwark-relay/dist/unifiedpush.js';
+import { isForwardableBody, toForwardPayload } from 'bulwark-relay/dist/payload.js';
+import { sendAccessApprovalPush } from './webpush.js';
+import { accessApprovalPushes } from './metrics.js';
 import {
   isValidFcmToken,
   isValidSubscriptionId,
   isValidWebPushSubscription,
-} from './validation.js';
+} from 'bulwark-relay/dist/validation.js';
 import type {
   FcmSubscriptionRecord,
   JmapPushBody,
   SubscriptionRecord,
   WebSubscriptionRecord,
-} from './types.js';
+} from 'bulwark-relay/dist/types.js';
 import {
   registry,
   httpRequestsTotal,
@@ -27,8 +31,8 @@ import {
   pushesForwarded,
   fcmDurationSeconds,
   webPushDurationSeconds,
-  accessApprovalPushes,
-} from './metrics.js';
+  upDurationSeconds,
+} from 'bulwark-relay/dist/metrics.js';
 
 const PORT = Number(process.env.PORT ?? 3003);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -294,9 +298,9 @@ async function handleJmap(
     return sendJson(res, 200, { ok: true });
   }
 
-  if (body['@type'] === 'StateChange') {
-    pushesReceived.inc({ type: 'StateChange' });
-    const result = await dispatchStateChange(record, body);
+  if (isForwardableBody(body)) {
+    pushesReceived.inc({ type: body['@type'] });
+    const result = await dispatch(record, body);
     let outcome: 'ok' | 'unregistered' | 'http-4xx' | 'http-5xx' | 'fail';
     if (result.unregistered) outcome = 'unregistered';
     else if (result.ok) outcome = 'ok';
@@ -309,7 +313,9 @@ async function handleJmap(
     if (result.unregistered) {
       await subscriptionStore.delete(id);
       subscriptionsUnregistered.inc({
-        reason: record.kind === 'fcm' ? 'fcm-unregistered' : 'webpush-gone',
+        reason: record.kind === 'fcm'
+          ? 'fcm-unregistered'
+          : record.kind === 'up' ? 'unifiedpush-gone' : 'webpush-gone',
         transport: record.kind,
       });
       await refreshActiveGauge();
@@ -372,11 +378,7 @@ async function handleAccessApprovalDispatch(
       continue;
     }
     const timer = webPushDurationSeconds.startTimer();
-    const sent = await sendWebPushPayload(
-      record,
-      { kind: 'access-approval' },
-      { ttl: 120, topic: 'comail-access-approval' },
-    );
+    const sent = await sendAccessApprovalPush(record);
     timer();
     if (sent.ok) {
       result.delivered += 1;
@@ -400,18 +402,25 @@ async function handleAccessApprovalDispatch(
   return sendJson(res, 200, { ok: result.failed === 0, ...result });
 }
 
-async function dispatchStateChange(
+async function dispatch(
   record: SubscriptionRecord,
-  body: Extract<JmapPushBody, { '@type': 'StateChange' }>,
+  body: Exclude<JmapPushBody, { '@type': 'PushVerification' }>,
 ): Promise<{ ok: boolean; status: number; unregistered: boolean }> {
+  const payload = toForwardPayload(body, record.accountLabel);
   if (record.kind === 'fcm') {
     const timer = fcmDurationSeconds.startTimer();
-    const result = await sendFcmPush(record, body);
+    const result = await sendFcmPush(record, payload);
+    timer();
+    return result;
+  }
+  if (record.kind === 'up') {
+    const timer = upDurationSeconds.startTimer();
+    const result = await sendUnifiedPush(record, payload);
     timer();
     return result;
   }
   const timer = webPushDurationSeconds.startTimer();
-  const result = await sendWebPush(record, body);
+  const result = await sendWebPush(record, payload);
   timer();
   return result;
 }
@@ -423,6 +432,7 @@ async function refreshActiveGauge(): Promise<void> {
   const counts = await subscriptionStore.sizeByKind();
   subscriptionsActive.set({ transport: 'fcm' }, counts.fcm);
   subscriptionsActive.set({ transport: 'web' }, counts.web);
+  subscriptionsActive.set({ transport: 'up' }, counts.up);
 }
 
 function normalizeRoute(method: string, path: string): string {

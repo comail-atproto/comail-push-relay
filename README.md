@@ -1,23 +1,19 @@
 # comail-push-relay
 
-comail's fork of [Bulwark Relay](https://github.com/bulwarkmail/relay), the
-privacy-preserving push notification relay for
-[Bulwark Webmail](https://github.com/bulwarkmail/webmail). It terminates JMAP
-`PushSubscription` pushes from the mail server and forwards an opaque wake-up
-to the client — FCM for mobile, Web Push for the PWA — so clients fetch new
-mail over their own JMAP connection. The relay never sees mail content: only
-opaque tokens, state-id hashes, and timing.
+Comail’s HTTP adapter for [Bulwark Relay](https://github.com/bulwarkmail/relay).
+It uses a pinned, unmodified upstream dependency for subscription storage,
+validation, FCM and Web Push delivery, metrics, and logging. Comail keeps the
+HTTP routes, opaque access-approval dispatch, and release health reporting here.
 
-This fork backs [comail](https://comail.at) Inbox and adds, beyond upstream:
+Mail pushes contain state references or message IDs. Clients fetch message
+content through their own JMAP sessions. Approval pushes contain only
+`{ "kind": "access-approval" }` and require the server-only dispatch bearer.
+Both use the same subscription store and browser VAPID key pair.
 
-- **Web Push (VAPID) delivery** for browser/PWA clients alongside FCM
-- **Opaque access-approval wake-ups** — a bearer-authenticated, server-only
-  dispatch endpoint so one browser `PushSubscription`/VAPID key pair can carry
-  both mail and access-approval notifications safely
-- A **subscription liveness probe** so clients can reap dead subscriptions
-
-Upstream: https://github.com/bulwarkmail/relay — licensed AGPL-3.0-only, as is
-this fork. Bulwark's name and branding belong to the Bulwark project.
+`npm run build` compiles the upstream TypeScript package and its declarations
+before building the adapter. Update the immutable archive URL in `package.json`
+and its lockfile together, then run the compatibility tests. Upstream’s source
+and license remain in the installed dependency; no build step rewrites them.
 
 ## Endpoints
 
@@ -28,7 +24,7 @@ this fork. Bulwark's name and branding belong to the Bulwark project.
 | `DELETE` | `/api/push/register/:id` | Tear down mapping (logout / uninstall) |
 | `GET` | `/api/push/verify/:id` | Poll for the JMAP `PushVerification` code |
 | `GET` | `/api/push/active/:id` | Liveness probe — `{ active }` if the subscription has forwarded a push (or was just registered); `404` if unknown. Clients use it to reap dead leftover subscriptions without touching live ones |
-| `POST` | `/api/push/jmap/:id` | JMAP server posts `PushVerification` or `StateChange` here — relay dispatches FCM or Web Push depending on the stored record |
+| `POST` | `/api/push/jmap/:id` | JMAP server posts `PushVerification`, `StateChange`, or `EmailPush` here — relay dispatches FCM or Web Push depending on the stored record |
 | `POST` | `/api/push/internal/access-approval` | Bearer-authenticated, server-only opaque access-approval wake-up dispatch |
 | `GET` | `/api/push/vapid-public-key` | Returns the relay's VAPID public key so browsers can subscribe |
 | `GET` | `/api/health` | Liveness probe |
@@ -59,7 +55,7 @@ docker compose up -d
 
 ## Tests
 
-`npm test` builds and runs every native Node test. See
+`npm test` builds and runs upstream’s tests and the adapter’s native Node tests. See
 [docs/testing.md](docs/testing.md) for the unit and component selections,
 determinism guarantees, and failure artifacts.
 
