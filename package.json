@@ -7,8 +7,9 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "build": "tsc -p node_modules/bulwark-relay/tsconfig.json --declaration && tsc",
+    "test": "npm run build && npm run test:upstream && node --test test/*.test.mjs",
+    "test:upstream": "npm --prefix node_modules/bulwark-relay test",
     "test:unit": "npm run build && node --test test/ci-result.test.mjs test/transport.test.mjs test/transport-unconfigured.test.mjs",
     "test:component": "npm run build && node --test test/server.test.mjs",
     "start": "node dist/server.js",
@@ -18,6 +19,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "bulwark-relay": "https://github.com/bulwarkmail/relay/archive/d4f34c04396c920a1cded5443e7361a4d94d3010.tar.gz",
     "prom-client": "^15.1.3",
     "web-push": "^3.6.7"
   },

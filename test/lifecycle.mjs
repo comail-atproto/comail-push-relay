@@ -81,7 +81,7 @@ function spawnRelay(options) {
   const dataDir = options.dataDir ?? null;
   const stdout = boundedCapture();
   const stderr = boundedCapture();
-  const child = spawn(process.execPath, ['dist/server.js'], {
+  const child = spawn(process.execPath, [...(options.nodeArgs ?? []), 'dist/server.js'], {
     cwd: options.cwd ?? process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

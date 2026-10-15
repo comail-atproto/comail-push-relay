@@ -1,6 +1,6 @@
 // Unit matrix for the Web Push transport boundary. In-process against the
-// compiled webpush module with a recording transport: no relay process, no
-// live credentials, no global module mock.
+// pinned upstream delivery module with a recording Web Push client.
+// No relay process, live credentials, or push service is used.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -43,7 +43,8 @@ function webRecord(overrides = {}) {
 }
 
 test('web push transport result matrix', async (t) => {
-  const { sendWebPush } = await import('../dist/webpush.js');
+  const { sendWebPush } = await import('bulwark-relay/dist/webpush.js');
+  const { toForwardPayload } = await import('bulwark-relay/dist/payload.js');
   const change = {
     '@type': 'StateChange',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
@@ -68,30 +69,35 @@ test('web push transport result matrix', async (t) => {
   ];
 
   for (const c of cases) {
-    await t.test(c.name, async () => {
+    await t.test(c.name, async (t) => {
       const transport = recordingTransport(c.outcome);
-      const result = await sendWebPush(webRecord(), change, transport);
+      t.mock.method(webpush, 'sendNotification', (...args) => transport.send(...args));
+      const result = await sendWebPush(webRecord(), toForwardPayload(change, 'account'));
       assert.deepEqual(result, c.want);
       assert.equal(transport.sent.length, 1, 'transport should be invoked exactly once');
     });
   }
 });
 
-test('web push StateChange payload carries opaque state references only', async () => {
-  const { sendWebPush } = await import('../dist/webpush.js');
+test('web push StateChange payload carries opaque state references only', async (t) => {
+  const { sendWebPush } = await import('bulwark-relay/dist/webpush.js');
+  const { toForwardPayload } = await import('bulwark-relay/dist/payload.js');
   const transport = recordingTransport(201);
-  const result = await sendWebPush(webRecord(), {
+  t.mock.method(webpush, 'sendNotification', (...args) => transport.send(...args));
+  const result = await sendWebPush(webRecord(), toForwardPayload({
     '@type': 'StateChange',
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
     // Fields the relay must never forward, even if a producer adds them.
     subject: 'private subject',
     body: 'private body',
-  }, transport);
+  }, 'account'));
 
   assert.deepEqual(result, { ok: true, status: 201, unregistered: false });
   assert.deepEqual(transport.sent[0].payload, {
     kind: 'jmap-state-change',
     accountLabel: 'account',
+    accountId: 'urn:ietf:params:jmap:mail',
+    emailIds: [],
     changed: { 'urn:ietf:params:jmap:mail': { Mailbox: '42' } },
   });
   assert.equal('subject' in transport.sent[0].payload, false);

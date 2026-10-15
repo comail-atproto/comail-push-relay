@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci --no-audit --no-fund
 COPY src ./src
-RUN npx tsc
+RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
@@ -13,7 +13,7 @@ ENV PORT=3003
 
 RUN addgroup -S relay && adduser -S relay -G relay
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown -R relay:relay /app
 

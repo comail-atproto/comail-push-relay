@@ -1,90 +1,21 @@
 import webpush from 'web-push';
-import type { RequestOptions } from 'web-push';
-import { logger } from './logger.js';
-import type { StateChange, WebPushSubscription, WebSubscriptionRecord } from './types.js';
+import { getVapidPublicKey } from 'bulwark-relay/dist/webpush.js';
+import type { WebPushSendResult } from 'bulwark-relay/dist/webpush.js';
+import type { WebSubscriptionRecord } from 'bulwark-relay/dist/types.js';
 
-let configured = false;
-let publicKey: string | null = null;
-
-function ensureConfigured(): boolean {
-  if (configured) return publicKey !== null;
-  configured = true;
-
-  const pub = process.env.VAPID_PUBLIC_KEY?.trim();
-  const priv = process.env.VAPID_PRIVATE_KEY?.trim();
-  // RFC 8292 requires a contact - mailto: or https: URL the push service can
-  // reach if our pushes start misbehaving. Default to a sensible self-host
-  // hint so dev deployments still work without explicit config.
-  const subject = process.env.VAPID_SUBJECT?.trim() || 'mailto:postmaster@localhost';
-
-  if (!pub || !priv) {
-    logger.warn('webpush: VAPID keys not configured - web push disabled');
-    return false;
-  }
-
-  webpush.setVapidDetails(subject, pub, priv);
-  publicKey = pub;
-  return true;
-}
-
-export function getVapidPublicKey(): string | null {
-  ensureConfigured();
-  return publicKey;
-}
-
-export interface WebPushSendResult {
-  ok: boolean;
-  status: number;
-  unregistered: boolean;
-}
-
-// Tests record this boundary without contacting a push service.
-export interface WebPushTransport {
-  send(
-    subscription: WebPushSubscription,
-    payload: string,
-    options: RequestOptions,
-  ): Promise<{ statusCode: number }>;
-}
-
-const defaultTransport: WebPushTransport = {
-  send: (subscription, payload, options) => webpush.sendNotification(subscription, payload, options),
-};
-
-export async function sendWebPush(
-  record: WebSubscriptionRecord,
-  change: StateChange,
-  transport: WebPushTransport = defaultTransport,
-): Promise<WebPushSendResult> {
-  return sendWebPushPayload(record, {
-    kind: 'jmap-state-change',
-    accountLabel: record.accountLabel ?? '',
-    changed: change.changed ?? {},
-  }, {}, transport);
-}
-
-export async function sendWebPushPayload(
-  record: WebSubscriptionRecord,
-  payload: Readonly<Record<string, unknown>>,
-  options: { ttl?: number; topic?: string } = {},
-  transport: WebPushTransport = defaultTransport,
-): Promise<WebPushSendResult> {
-  if (!ensureConfigured()) {
+export async function sendAccessApprovalPush(record: WebSubscriptionRecord): Promise<WebPushSendResult> {
+  if (!getVapidPublicKey()) {
     return { ok: false, status: 0, unregistered: false };
   }
-
   try {
-    const res = await transport.send(record.webPush, JSON.stringify(payload), {
-      TTL: options.ttl ?? 60 * 60,
+    const response = await webpush.sendNotification(record.webPush, JSON.stringify({ kind: 'access-approval' }), {
+      TTL: 120,
       urgency: 'high',
-      ...(options.topic ? { topic: options.topic } : {}),
+      topic: 'comail-access-approval',
     });
-    return { ok: true, status: res.statusCode, unregistered: false };
+    return { ok: true, status: response.statusCode, unregistered: false };
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode ?? 0;
-    // 404 / 410 mean the push service has dropped the subscription -
-    // mirrors the FCM UNREGISTERED branch so the caller deletes the record.
-    const unregistered = status === 404 || status === 410;
-    return { ok: false, status, unregistered };
+    return { ok: false, status, unregistered: status === 404 || status === 410 };
   }
 }
