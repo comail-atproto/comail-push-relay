@@ -3,12 +3,10 @@
 Comail’s HTTP adapter for [Bulwark Relay](https://github.com/bulwarkmail/relay).
 It uses a pinned, unmodified upstream dependency for subscription storage,
 validation, FCM and Web Push delivery, metrics, and logging. Comail keeps the
-HTTP routes, opaque access-approval dispatch, and release health reporting here.
+HTTP routes and release health reporting here.
 
 Mail pushes contain state references or message IDs. Clients fetch message
-content through their own JMAP sessions. Approval pushes contain only
-`{ "kind": "access-approval" }` and require the server-only dispatch bearer.
-Both use the same subscription store and browser VAPID key pair.
+content through their own JMAP sessions.
 
 `npm run build` compiles the upstream TypeScript package and its declarations
 before building the adapter. Update the immutable archive URL in `package.json`
@@ -25,7 +23,6 @@ and license remain in the installed dependency; no build step rewrites them.
 | `GET` | `/api/push/verify/:id` | Poll for the JMAP `PushVerification` code |
 | `GET` | `/api/push/active/:id` | Liveness probe — `{ active }` if the subscription has forwarded a push (or was just registered); `404` if unknown. Clients use it to reap dead leftover subscriptions without touching live ones |
 | `POST` | `/api/push/jmap/:id` | JMAP server posts `PushVerification`, `StateChange`, or `EmailPush` here — relay dispatches FCM or Web Push depending on the stored record |
-| `POST` | `/api/push/internal/access-approval` | Bearer-authenticated, server-only opaque access-approval wake-up dispatch |
 | `GET` | `/api/push/vapid-public-key` | Returns the relay's VAPID public key so browsers can subscribe |
 | `GET` | `/api/health` | Liveness probe |
 
@@ -70,7 +67,6 @@ determinism guarantees, and failure artifacts.
 | `VAPID_PUBLIC_KEY` | unset | Base64url-encoded P-256 public key for Web Push. Generate with `npx web-push generate-vapid-keys` |
 | `VAPID_PRIVATE_KEY` | unset | Matching private key. Web Push is disabled if either VAPID var is missing |
 | `VAPID_SUBJECT` | `mailto:postmaster@localhost` | `mailto:` or `https:` contact the push services can reach if the relay misbehaves (RFC 8292) |
-| `ACCESS_APPROVAL_DISPATCH_TOKEN` | unset | Minimum 32-character bearer for the server-only access-approval dispatch endpoint; unset disables that endpoint |
 
 ## License
 

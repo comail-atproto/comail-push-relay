@@ -7,7 +7,6 @@ import test from 'node:test';
 import { startRelay } from './lifecycle.mjs';
 
 const SUBSCRIPTION_ID = 'subscription_12345';
-const DISPATCH_TOKEN = 'a'.repeat(40);
 const FCM_TOKEN = 'f'.repeat(64);
 
 test('relay reports its bound listen address and reaches readiness', async () => {
@@ -143,88 +142,6 @@ test('subscription lifecycle persists, verifies and tears down cleanly', async (
   }
 });
 
-test('access-approval dispatch enforces authorization and payload shape', async (t) => {
-  const relay = await startRelay({
-    env: { ACCESS_APPROVAL_DISPATCH_TOKEN: DISPATCH_TOKEN },
-  });
-  t.after(() => relay.stop());
-  assert.deepEqual(await relay.post('/api/push/register', {
-    subscriptionId: SUBSCRIPTION_ID,
-    fcmToken: FCM_TOKEN,
-  }), { status: 200, body: { ok: true } });
-  assert.deepEqual(await relay.post('/api/push/internal/access-approval', {
-    kind: 'access-approval', subscriptionIds: [SUBSCRIPTION_ID],
-  }, `Bearer ${DISPATCH_TOKEN}`), {
-    status: 200,
-    body: { ok: true, delivered: 0, missing: 1, removed: 0, failed: 0 },
-  });
-
-  const unknown = { kind: 'access-approval', subscriptionIds: ['unknown_subscription'] };
-  const cases = [
-    {
-      name: 'missing bearer is unauthorized',
-      body: unknown,
-      want: { status: 401, body: { error: 'Unauthorized' } },
-    },
-    {
-      name: 'wrong bearer is unauthorized',
-      body: unknown,
-      authorization: 'Bearer wrong',
-      want: { status: 401, body: { error: 'Unauthorized' } },
-    },
-    {
-      name: 'non-bearer scheme is unauthorized',
-      body: unknown,
-      authorization: `Token ${DISPATCH_TOKEN}`,
-      want: { status: 401, body: { error: 'Unauthorized' } },
-    },
-    {
-      name: 'malformed dispatch is rejected',
-      body: { kind: 'other', subscriptionIds: ['unknown_subscription'] },
-      authorization: `Bearer ${DISPATCH_TOKEN}`,
-      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
-    },
-    {
-      name: 'empty id list is rejected',
-      body: { kind: 'access-approval', subscriptionIds: [] },
-      authorization: `Bearer ${DISPATCH_TOKEN}`,
-      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
-    },
-    {
-      name: 'too many ids are rejected',
-      body: {
-        kind: 'access-approval',
-        subscriptionIds: Array.from({ length: 17 }, (_, i) => `subscription_${i}`),
-      },
-      authorization: `Bearer ${DISPATCH_TOKEN}`,
-      want: { status: 400, body: { error: 'Invalid access approval dispatch' } },
-    },
-    {
-      name: 'unknown ids report as missing',
-      body: unknown,
-      authorization: `Bearer ${DISPATCH_TOKEN}`,
-      want: {
-        status: 200,
-        body: { ok: true, delivered: 0, missing: 1, removed: 0, failed: 0 },
-      },
-    },
-  ];
-
-  for (const c of cases) {
-    await t.test(c.name, async () => {
-      const response = await relay.json('/api/push/internal/access-approval', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(c.authorization ? { authorization: c.authorization } : {}),
-        },
-        body: JSON.stringify(c.body),
-      });
-      assert.deepEqual(response, c.want);
-    });
-  }
-});
-
 test('stock EmailPush reloads existing subscriptions without exposing mail content', async (t) => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'push-relay-existing-'));
   t.after(() => rm(dataDir, { recursive: true, force: true }));
@@ -252,34 +169,17 @@ test('stock EmailPush reloads existing subscriptions without exposing mail conte
   });
 });
 
-test('approval dispatch shares the stock store and removes only expired subscriptions', async (t) => {
-  const { default: webpush } = await import('web-push');
-  const keys = webpush.generateVAPIDKeys();
-  const relay = await startRelay({
-    nodeArgs: ['--import', './test/webpush-fixture.mjs'],
-    env: {
-      ACCESS_APPROVAL_DISPATCH_TOKEN: DISPATCH_TOKEN,
-      VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey,
-    },
-  });
+test('retired approval dispatch stays unavailable with a legacy token', async (t) => {
+  const token = 'a'.repeat(40);
+  const relay = await startRelay({ env: { ACCESS_APPROVAL_DISPATCH_TOKEN: token } });
   t.after(() => relay.stop());
-  const ids = ['delivered', 'gone', 'retry'].map((result) => `subscription_${result}`);
-  for (const result of ['delivered', 'gone', 'retry']) {
-    assert.equal((await relay.post('/api/push/register/web', {
-      subscriptionId: `subscription_${result}`,
-      subscription: {
-        endpoint: `https://push.example.com/${result}`,
-        keys: { p256dh: keys.publicKey, auth: 'a'.repeat(22) },
-      },
-    })).status, 200);
-  }
-  assert.deepEqual(await relay.post('/api/push/internal/access-approval', {
-    kind: 'access-approval', subscriptionIds: [...ids, ids[0], 'subscription_missing'],
-  }, `Bearer ${DISPATCH_TOKEN}`), {
-    status: 200, body: { ok: false, delivered: 1, missing: 1, removed: 1, failed: 1 },
-  });
-  const persisted = JSON.parse(await readFile(path.join(relay.dataDir, 'subscriptions.json'), 'utf8'));
-  assert.ok(persisted.records.subscription_delivered.lastPushAt > 0);
-  assert.equal(persisted.records.subscription_gone, undefined);
-  assert.equal(persisted.records.subscription_retry.lastPushAt, null);
+  const id = 'subscription_retired';
+  assert.equal((await relay.post('/api/push/register', {
+    subscriptionId: id, fcmToken: 'f'.repeat(64),
+  })).status, 200);
+  assert.equal((await relay.post('/api/push/internal/access-approval', {
+    kind: 'access-approval', subscriptionIds: [id],
+  }, `Bearer ${token}`)).status, 404);
+  assert.equal((await relay.json('/api/health')).body.subscriptions, 1);
+  assert.equal((await relay.json(`/api/push/active/${id}`)).body.active, true);
 });
