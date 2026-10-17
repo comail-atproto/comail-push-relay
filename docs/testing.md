@@ -8,7 +8,7 @@ and every test command builds first so tests run against current `src`.
 | Layer | Selection | Covers |
 | --- | --- | --- |
 | Unit | `npm run test:unit` | Web Push transport/error matrix against an injected recording transport; the required `ci` result-check policy. In-process, no credentials. |
-| Component | `npm run test:component` | The real relay process against a temporary store: readiness, subscription lifecycle, registration validation, access-approval authorization. |
+| Component | `npm run test:component` | The real relay process against a temporary store: readiness, subscription lifecycle, registration validation, retired approval routes. |
 | All | `npm test` | Both selections, `node --test test/*.test.mjs`. |
 
 ## Prerequisites
@@ -28,7 +28,7 @@ Node >= 20.
 - Each case owns a fresh temporary `PUSH_DATA_DIR`; the helper deletes only
   directories it created.
 - The helper strips inherited `VAPID_*`, `FCM_SERVICE_ACCOUNT_JSON` and
-  `ACCESS_APPROVAL_DISPATCH_TOKEN`; it also clears inherited release identity
+  legacy `ACCESS_APPROVAL_DISPATCH_TOKEN`; it also clears inherited release identity
   and data directory settings. Cases opt into synthetic configuration explicitly.
 - Health probes are bounded with `AbortSignal.timeout`.
 - VAPID configuration is read once per module instance. The absent-key case
