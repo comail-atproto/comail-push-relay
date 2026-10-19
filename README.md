@@ -103,3 +103,12 @@ and `RELEASE_OBSERVATION_SECONDS`. Stages are `health`, `mail`, `monitoring`, or
 `complete`; results are `running`, `success`, `failure`, or `cancelled`.
 The host checks the build ID and deployment sequence before recording the report.
 A successful health check does not count as mail acceptance.
+
+## Shared CI workers
+
+`COMAIL_SHARED_CI_ENABLED=true` selects the shared homelab Linux workers for
+build, test, and contribution checks. Deployment retains its current host.
+Leave the variable unset or `false` to use GitHub-hosted workers. Compare the
+same workflow revision on both routes before enabling shared workers. Include
+queue wait and total elapsed time; restore `false` if the shared route is slower
+or fails checks.
