@@ -1,6 +1,8 @@
 # Dependency updates
 
 Dependabot opens weekly patch groups; minor and major upgrades stay separate.
+Each ecosystem has at most one open routine update PR. Security updates use
+their separate queue and are not capped by this setting.
 Scott's standing policy permits automated review and merge of tested application
 patches and stable minor updates. Actions, Nix, Native, pre-1.0 minors, and minors
 without version metadata require human review. Bot identity and signatures are
