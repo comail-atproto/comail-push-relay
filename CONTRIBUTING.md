@@ -71,8 +71,6 @@ attribution. Prefer omitting "AI-assisted" stamps and boilerplate model credits.
 Contributors remain responsible for correctness, testing, authorship and the right
 to submit their work.
 
-## Dependency update review
+## Dependency updates
 
-Trusted Dependabot patch/minor PRs may use the standing review policy in
-[Dependency updates](docs/dependency-updates.md) after its required tests and
-security checks are enforced. Other PRs retain the normal review requirements.
+See [Dependency updates](docs/dependency-updates.md).

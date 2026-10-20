@@ -1,28 +1,16 @@
 # Dependency updates
 
-Dependabot opens weekly version updates and immediate security fixes. Compatible
-patch/minor updates are grouped; major updates remain separate and need review.
-GitHub-signed Dependabot commits may use the standing review policy below.
+Dependabot opens weekly patch groups; minor and major upgrades stay separate.
+Scott's standing policy permits automated review and merge of tested application
+patches and stable minor updates. Actions, Nix, Native, pre-1.0 minors, and minors
+without version metadata require human review. Bot identity and signatures are
+checked before approval; the approval job never checks out PR code.
 
-The trusted `dependency-automerge.yml` workflow may approve patch/minor Dependabot
-PRs and enable GitHub auto-merge. It never checks out or runs PR code. GitHub must
-still enforce signatures, an up-to-date branch, required tests and security scans.
-Unsupported update types and major upgrades need review. Disable queued
-auto-merge before editing a Dependabot PR by hand; those edits need normal review.
+Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces DCO,
+verified signatures, full application tests and `dependency-security`, and a
+real Dependabot PR passes them. Retain existing secret, customer-data, Go binary
+and deployment health checks. Dependabot needs its own read-only source/cache
+secrets; never give it deployment credentials. Existing release holds still apply.
 
-Before setting `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED=true`, enable repository
-auto-merge and verify that the required test and security contexts pass on a real
-Dependabot PR. Keep the flag unset until those contexts are enforced. A green
-metadata check alone is insufficient. Dependabot PRs receive Dependabot secrets,
-not Actions secrets; provision only the source/cache reads their tests need.
-Never give dependency PRs deployment credentials.
-
-Unset the flag to stop approving new updates. To stop a PR already waiting for
-checks, disable auto-merge on that PR too. Reverting this change removes the
-workflows after the next merge; it does not undo dependency updates already merged.
-
-Enable dependency graph alerts and security-fix PRs in repository settings.
-Private CodeQL, dependency review and native secret protection need the relevant
-GitHub entitlement. Keep existing secret, customer-data, credential-boundary and
-Go source/binary scans until replacements are enabled and verified. Rotate leaked
-credentials; a dependency merge does not remove that exposure.
+To stop automation, unset the flag and disable auto-merge on already queued PRs.
+Human edits to a bot PR also need queued auto-merge disabled and normal review.
