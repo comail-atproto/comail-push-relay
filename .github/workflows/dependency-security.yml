@@ -23,7 +23,7 @@ jobs:
     name: dependency-security
     needs: scan
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
     steps:
