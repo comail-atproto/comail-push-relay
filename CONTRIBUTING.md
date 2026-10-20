@@ -70,3 +70,7 @@ Respect the repository's license and contributor authorship.
 attribution. Prefer omitting "AI-assisted" stamps and boilerplate model credits.
 Contributors remain responsible for correctness, testing, authorship and the right
 to submit their work.
+
+## Dependency updates
+
+See [Dependency updates](docs/dependency-updates.md).
