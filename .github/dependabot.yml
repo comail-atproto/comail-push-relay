@@ -15,18 +15,17 @@ updates:
     prefix: chore
     include: scope
   groups:
-    security-patches:
+    security-fixes:
       applies-to: security-updates
       patterns:
       - '*'
-      update-types:
-      - patch
     compatible-updates:
       applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
+      - minor
 - package-ecosystem: github-actions
   directories:
   - /
@@ -42,15 +41,14 @@ updates:
     prefix: chore
     include: scope
   groups:
-    security-patches:
+    security-fixes:
       applies-to: security-updates
       patterns:
       - '*'
-      update-types:
-      - patch
     compatible-updates:
       applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
+      - minor

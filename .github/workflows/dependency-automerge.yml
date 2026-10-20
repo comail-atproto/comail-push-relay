@@ -24,13 +24,22 @@ jobs:
         id: metadata
         with:
           github-token: ${{ github.token }}
+      - name: Check every update against the standing policy
+        id: policy
+        env:
+          DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          allowed=$(jq -r '
+            if type == "array" then
+              length > 0 and all(.[];
+                .updateType == "version-update:semver-patch" or
+                (.updateType == "version-update:semver-minor" and
+                 ((.prevVersion // "") | test("^v?[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"))))
+            else false end' <<< "$DEPENDENCIES")
+          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
       - name: Approve compatible updates under the standing policy
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
-           steps.metadata.outputs.previous-version != '' &&
-           !startsWith(steps.metadata.outputs.previous-version, '0.') &&
-           !startsWith(steps.metadata.outputs.previous-version, 'v0.'))
+        if: steps.policy.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -38,12 +47,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" -f event=APPROVE -f "commit_id=$HEAD_SHA"
       - name: Merge only after GitHub's required checks pass
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
-           steps.metadata.outputs.previous-version != '' &&
-           !startsWith(steps.metadata.outputs.previous-version, '0.') &&
-           !startsWith(steps.metadata.outputs.previous-version, 'v0.'))
+        if: steps.policy.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
