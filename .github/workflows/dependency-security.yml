@@ -1,0 +1,33 @@
+name: Scan dependencies
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dependency-scan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    with:
+      upload-sarif: false
+      fail-on-vuln: true
+  result:
+    name: dependency-security
+    needs: scan
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require a completed clean scan
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+        run: test "$SCAN_RESULT" = success

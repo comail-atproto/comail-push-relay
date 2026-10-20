@@ -1,0 +1,60 @@
+version: 2
+updates:
+- package-ecosystem: npm
+  directories:
+  - /
+  schedule:
+    interval: weekly
+    day: tuesday
+    time: 04:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  labels:
+  - automated
+  commit-message:
+    prefix: chore
+    include: scope
+  groups:
+    security-patches:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+    compatible-updates:
+      applies-to: version-updates
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+- package-ecosystem: github-actions
+  directories:
+  - /
+  schedule:
+    interval: weekly
+    day: tuesday
+    time: 04:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  labels:
+  - automated
+  commit-message:
+    prefix: chore
+    include: scope
+  groups:
+    security-patches:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+    compatible-updates:
+      applies-to: version-updates
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
