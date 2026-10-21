@@ -1,11 +1,11 @@
-FROM node:22-alpine AS build
+FROM node:22.23.4-alpine@sha256:ce8d97f7cfc7c5386421eb932df20a29df99b1a7f469f6157d5c9956702ffadc AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci --no-audit --no-fund
 COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM node:22-alpine AS runtime
+FROM node:22.23.4-alpine@sha256:ce8d97f7cfc7c5386421eb932df20a29df99b1a7f469f6157d5c9956702ffadc AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PUSH_DATA_DIR=/app/data
