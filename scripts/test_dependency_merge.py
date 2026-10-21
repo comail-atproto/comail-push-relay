@@ -81,7 +81,7 @@ class MergeTests(unittest.TestCase):
         self.assertFalse(self.run_merge())
 
     def test_human_requested_changes_stops_automatic_merge(self):
-        reviews = [self.review, {'user': {'id': 1456022}, 'state': 'REQUEST_CHANGES'}]
+        reviews = [self.review, {'user': {'id': 1456022}, 'state': 'CHANGES_REQUESTED'}]
         self.assertFalse(self.module.approved(reviews, SHA))
         reviews.append({'user': {'id': 1456022}, 'state': 'APPROVED', 'commit_id': SHA})
         self.assertTrue(self.module.approved(reviews, SHA))

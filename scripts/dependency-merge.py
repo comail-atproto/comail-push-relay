@@ -24,9 +24,9 @@ def eligible(pr, repo, sha):
 def approved(reviews, sha):
     latest = {}
     for review in reviews:
-        if review['state'] in ('APPROVED', 'REQUEST_CHANGES', 'DISMISSED'):
+        if review['state'] in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'):
             latest[review['user']['id']] = review['state']
-    if 'REQUEST_CHANGES' in latest.values():
+    if 'CHANGES_REQUESTED' in latest.values():
         return False
     return any(review['user']['id'] == ACTIONS
                and review['user']['login'] == 'github-actions[bot]'
