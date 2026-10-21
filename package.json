@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc -p node_modules/bulwark-relay/tsconfig.json --declaration && tsc",
+    "build": "tsc -p node_modules/bulwark-relay/tsconfig.json --declaration --types node && tsc",
     "test": "npm run build && npm run test:upstream && node --test test/*.test.mjs",
     "test:upstream": "npm --prefix node_modules/bulwark-relay test",
     "test:unit": "npm run build && node --test test/ci-result.test.mjs test/transport.test.mjs test/transport-unconfigured.test.mjs",
