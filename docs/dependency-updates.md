@@ -16,7 +16,8 @@ review because the metadata action reads only the first commit.
 
 The metadata workflow runs from main with `pull_request_target` and never checks
 out PR code. A repository-scoped App token performs the merge so main CI/CD runs.
-Its key lives in the main-only `dependency-automation` environment. Workflow and
+Its key lives in the main-only `dependency-automation` environment. The merge controller
+checks out only the trusted workflow revision, never PR code. Workflow and
 CODEOWNERS changes require Scott's code-owner review.
 
 Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces DCO,
@@ -25,5 +26,17 @@ real App-merged Dependabot PR passes them and starts main CI/CD. Retain existing
 secret, customer-data, Go binary and deployment health checks. Dependabot needs its own read-only source/cache
 secrets; never give it deployment credentials. Existing release holds still apply.
 
-To stop automation, unset the flag and disable auto-merge on already queued PRs.
-Human edits to a bot PR also need queued auto-merge disabled and normal review.
+The metadata action records a policy approval for one exact verified Dependabot
+commit. The controller runs after CI and checks the current head, signature,
+DCO, approval, base, draft state and the `human` hold label again. GitHub then enforces
+required checks and reviews against that exact SHA. It never queues a native
+merge request, so an earlier approval cannot authorize a later writer commit.
+Majors, missing metadata and agent repairs keep their normal review requirements.
+
+Run `python3 -B scripts/test_dependency_merge.py` to test head changes, stale
+approvals, holds and deferred merges. `Test dependency merge policy` runs the
+same tests in CI. The maintained metadata action still classifies all packages.
+
+To pause automation, unset the flag and cancel active runs of this workflow.
+Before upgrading the old controller, disable its existing native auto-merge
+requests too. No new native requests are created by this controller.

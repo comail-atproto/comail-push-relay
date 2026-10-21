@@ -2,13 +2,20 @@ name: Auto-merge tested dependency updates
 on:
   # Use trusted main metadata only; never execute PR code here.
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  workflow_run:
+    workflows: ["Check contribution policy", "Review dependency changes", "Scan dependencies", "Test and deploy push relay"]
+    types: [completed]
+    branches: ["dependabot/**"]
 permissions:
   contents: read
 jobs:
-  enable:
+  approve:
+    outputs:
+      allowed: ${{ steps.policy.outputs.allowed }}
     environment: dependency-automation
     if: >-
+      github.event_name == 'pull_request_target' &&
       vars.COMAIL_DEPENDENCY_AUTOMERGE_ENABLED == 'true' &&
       github.ref == 'refs/heads/main' &&
       github.event.pull_request.commits == 1 &&
@@ -49,10 +56,41 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" -f event=APPROVE -f "commit_id=$HEAD_SHA"
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" \
+            | jq -e --arg head "$HEAD_SHA" '.head.sha == $head and .commits == 1' >/dev/null
+          gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            -f event=APPROVE -f "commit_id=$HEAD_SHA" -f 'body=<!-- comail-dependency-policy:v2 -->'
+
+  merge:
+    needs: approve
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      vars.COMAIL_DEPENDENCY_AUTOMERGE_ENABLED == 'true' &&
+      ((github.event_name == 'pull_request_target' && needs.approve.outputs.allowed == 'true') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    environment: dependency-automation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check the current head before accessing the merger key
+        id: ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/dependency-merge.py --check
       - name: Mint a repository-scoped merge token
         id: merger
-        if: steps.policy.outputs.allowed == 'true'
+        if: steps.ready.outputs.ready == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.COMAIL_DEPENDENCY_APP_CLIENT_ID }}
@@ -63,10 +101,8 @@ jobs:
           permission-pull-requests: write
           permission-checks: read
           permission-statuses: read
-      - name: Merge only after GitHub's required checks pass
-        if: steps.policy.outputs.allowed == 'true'
+      - name: Merge the currently eligible tested head
+        if: steps.ready.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ steps.merger.outputs.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+        run: python3 -B scripts/dependency-merge.py
