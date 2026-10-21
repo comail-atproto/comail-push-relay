@@ -52,7 +52,7 @@ jobs:
           printf '{"app":"push-relay","source_sha":"%s"}\n' "$GITHUB_SHA" > .release/release.json
           tar -C .release --exclude=dist/node_modules/.bin -czf release.tar.gz release.json dist
           sha256sum release.tar.gz > release.sha256
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'push'
         with:
           name: push-relay-release
@@ -145,7 +145,7 @@ jobs:
         run: bash scripts/deploy-release.sh "${{ github.event_name == 'workflow_dispatch' && inputs.action == 'seed' && 'seed' || github.event_name == 'workflow_dispatch' && inputs.action == 'rollback' && 'rollback' || 'install' }}"
       - name: Save release receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-production
           path: ${{ runner.temp }}/comail-release-receipt.json
