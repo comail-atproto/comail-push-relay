@@ -17,13 +17,14 @@ jobs:
       actions: read
       security-events: write
     with:
+      runs-on: comail-big-nix-isolated
       upload-sarif: false
       fail-on-vuln: true
   result:
     name: dependency-security
     needs: scan
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: comail-big-nix-light
     timeout-minutes: 2
     permissions: {}
     steps:
