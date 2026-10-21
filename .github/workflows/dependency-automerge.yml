@@ -1,13 +1,17 @@
 name: Auto-merge tested dependency updates
 on:
-  pull_request:
+  # Use trusted main metadata only; never execute PR code here.
+  pull_request_target:
     types: [opened, synchronize, reopened]
 permissions:
   contents: read
 jobs:
   enable:
+    environment: dependency-automation
     if: >-
       vars.COMAIL_DEPENDENCY_AUTOMERGE_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.pull_request.commits == 1 &&
       github.event.pull_request.user.id == 49699333 &&
       !startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/') &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -17,35 +21,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     steps:
-      - uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+      - uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         id: metadata
         with:
           github-token: ${{ github.token }}
+      - name: Check every update against the standing policy
+        id: policy
+        env:
+          DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          allowed=$(jq -r '
+            if type == "array" then
+              length > 0 and all(.[];
+                .updateType == "version-update:semver-patch" or
+                (.updateType == "version-update:semver-minor" and
+                 ((.prevVersion // "") | test("^v?[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"))))
+            else false end' <<< "$DEPENDENCIES")
+          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
       - name: Approve compatible updates under the standing policy
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
-           steps.metadata.outputs.previous-version != '' &&
-           !startsWith(steps.metadata.outputs.previous-version, '0.') &&
-           !startsWith(steps.metadata.outputs.previous-version, 'v0.'))
+        if: steps.policy.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" -f event=APPROVE -f "commit_id=$HEAD_SHA"
+      - name: Mint a repository-scoped merge token
+        id: merger
+        if: steps.policy.outputs.allowed == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.COMAIL_DEPENDENCY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COMAIL_DEPENDENCY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-statuses: read
       - name: Merge only after GitHub's required checks pass
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
-           steps.metadata.outputs.previous-version != '' &&
-           !startsWith(steps.metadata.outputs.previous-version, '0.') &&
-           !startsWith(steps.metadata.outputs.previous-version, 'v0.'))
+        if: steps.policy.outputs.allowed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.merger.outputs.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
