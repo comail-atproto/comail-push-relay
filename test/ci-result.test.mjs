@@ -24,3 +24,13 @@ test('the required ci check reports the owner build result on source events', ()
     assert.equal(run.status === 0, result === 'success', `build result: ${result || 'missing'}`);
   }
 });
+
+test('dependency scans fail closed without artifact storage and keep free runners', () => {
+  const source = readFileSync(new URL('../.github/workflows/dependency-security.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /osv-scanner-reusable\.yml|actions\/(?:upload|download)-artifact@|comail-runner|comail-big-nix/);
+  assert.match(source, /google\/osv-scanner-action\/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346/);
+  assert.match(source, /google\/osv-scanner-action\/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346/);
+  assert.match(source, /--fail-on-vuln=true/);
+  assert.match(source, /run: test -s \.osv-results\.json/);
+  assert.match(source, /runs-on: ubuntu-latest/);
+});
