@@ -16,8 +16,8 @@ review because the metadata action reads only the first commit.
 
 The metadata workflow runs from main with `pull_request_target` and never checks
 out PR code. A repository-scoped App token performs the merge so main CI/CD runs.
-Its key lives in the main-only `dependency-automation` environment. The merge controller
-checks out only the trusted workflow revision, never PR code. Workflow and
+Its key lives in the main-only `dependency-automation` environment. The merge controller runs from the shared `comail-atproto/ci` action without
+checking out application code. Workflow and
 CODEOWNERS changes require Scott's code-owner review.
 
 Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces DCO,
@@ -33,8 +33,8 @@ required checks and reviews against that exact SHA. It never queues a native
 merge request, so an earlier approval cannot authorize a later writer commit.
 Majors, missing metadata and agent repairs keep their normal review requirements.
 
-Run `python3 -B scripts/test_dependency_merge.py` to test head changes, stale
-approvals, holds and deferred merges. `Test dependency merge policy` runs the
+Run `python3 -B scripts/test_dependency_merge.py` in a checkout of
+`comail-atproto/ci` to test head changes, stale approvals, holds and deferred merges. `Test dependency merge policy` runs the
 same tests in CI. The maintained metadata action still classifies all packages.
 
 To pause automation, unset the flag and cancel active runs of this workflow.

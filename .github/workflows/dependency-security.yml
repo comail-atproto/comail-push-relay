@@ -20,30 +20,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Remove stale scan results
-        run: rm -f .osv-results.json
-      - name: Scan dependencies
-        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
-        env:
-          GOTOOLCHAIN: auto
+      - uses: comail-atproto/ci/actions/scan-dependencies@v1
         with:
-          scan-args: |-
-            --output=.osv-results.json
-            --format=json
-            -r
-            ./
-        continue-on-error: true
-      # A failed scan or missing lockfile must not become a clean report.
-      - name: Require a completed scan
-        run: test -s .osv-results.json
-      - name: Reject vulnerable dependencies
-        uses: google/osv-scanner-action/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
-        with:
-          scan-args: |-
-            --output=.osv-results.sarif
-            --new=.osv-results.json
-            --gh-annotations=false
-            --fail-on-vuln=true
+          install-nix: 'true'
   result:
     name: dependency-security
     needs: scan

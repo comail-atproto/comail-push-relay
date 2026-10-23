@@ -97,11 +97,10 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22.23.4'
-      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+      - uses: comail-atproto/ci/actions/connect-deployment@v1
         with:
-          oauth-client-id: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_ID }}
-          oauth-secret: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
-          tags: tag:comail-app-deploy
+          client-id: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_ID }}
+          client-secret: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
       - name: Verify promotion source
         id: source-run
         if: github.event_name == 'workflow_dispatch' && inputs.action != 'rollback'

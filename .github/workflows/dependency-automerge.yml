@@ -31,37 +31,10 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-        id: metadata
-        with:
-          github-token: ${{ github.token }}
-      - name: Check every update against the standing policy
+      - uses: comail-atproto/ci/actions/approve-dependency@v1
         id: policy
-        env:
-          DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
-        run: |
-          set -euo pipefail
-          allowed=$(jq -r '
-            if type == "array" then
-              length > 0 and all(.[];
-                .updateType == "version-update:semver-patch" or
-                (.updateType == "version-update:semver-minor" and
-                 ((.prevVersion // "") | test("^v?[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"))))
-            else false end' <<< "$DEPENDENCIES")
-          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
-      - name: Approve compatible updates under the standing policy
-        if: steps.policy.outputs.allowed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" \
-            | jq -e --arg head "$HEAD_SHA" '.head.sha == $head and .commits == 1' >/dev/null
-          gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" \
-            -f event=APPROVE -f "commit_id=$HEAD_SHA" -f 'body=<!-- comail-dependency-policy:v2 -->'
+        with:
+          token: ${{ github.token }}
 
   merge:
     needs: approve
@@ -79,30 +52,8 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: comail-atproto/ci/actions/merge-dependency@v1
         with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-      - name: Check the current head before accessing the merger key
-        id: ready
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/dependency-merge.py --check
-      - name: Mint a repository-scoped merge token
-        id: merger
-        if: steps.ready.outputs.ready == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.COMAIL_DEPENDENCY_APP_CLIENT_ID }}
-          private-key: ${{ secrets.COMAIL_DEPENDENCY_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-checks: read
-          permission-statuses: read
-      - name: Merge the currently eligible tested head
-        if: steps.ready.outputs.ready == 'true'
-        env:
-          GH_TOKEN: ${{ steps.merger.outputs.token }}
-        run: python3 -B scripts/dependency-merge.py
+          token: ${{ github.token }}
+          app-client-id: ${{ vars.COMAIL_DEPENDENCY_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.COMAIL_DEPENDENCY_APP_PRIVATE_KEY }}

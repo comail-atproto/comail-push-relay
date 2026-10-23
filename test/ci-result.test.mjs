@@ -28,9 +28,7 @@ test('the required ci check reports the owner build result on source events', ()
 test('dependency scans fail closed without artifact storage and keep free runners', () => {
   const source = readFileSync(new URL('../.github/workflows/dependency-security.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /osv-scanner-reusable\.yml|actions\/(?:upload|download)-artifact@|comail-runner|comail-big-nix/);
-  assert.match(source, /google\/osv-scanner-action\/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346/);
-  assert.match(source, /google\/osv-scanner-action\/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346/);
-  assert.match(source, /--fail-on-vuln=true/);
-  assert.match(source, /run: test -s \.osv-results\.json/);
+  assert.match(source, /comail-atproto\/ci\/actions\/scan-dependencies@v1/);
+  assert.match(source, /install-nix: 'true'/);
   assert.match(source, /runs-on: ubuntu-latest/);
 });
