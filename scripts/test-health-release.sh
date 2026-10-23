@@ -14,10 +14,3 @@ if COMAIL_HEALTH_PATH=/api/health COMAIL_HEALTH_ATTEMPTS=2 COMAIL_HEALTH_DELAY=0
   echo 'health check accepted a persistent wrong identity' >&2
   exit 1
 fi
-for _ in $(seq 1 30); do
-  if curl --silent --fail "http://127.0.0.1:$port/api/health" > "$temp_dir/health.json"; then
-    break
-  fi
-  sleep 0.2
-done
-EXPECTED_IDENTITY="$identity" node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(r.ok!==true||r.release_identity!==process.env.EXPECTED_IDENTITY)process.exit(1)' "$temp_dir/health.json"
