@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - comail-big-nix-light
+    - comail-big-nix-isolated
