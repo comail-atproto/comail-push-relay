@@ -49,6 +49,3 @@ None of these selections require live push credentials, FCM, or APNs access.
 
 `bash scripts/test-health-release.sh` exercises the release health contract.
 This is separate from the test selections above and needs `bash` and `curl`.
-
-The shared `comail-atproto/ci` repository owns contribution and dependency
-policy tests. Run those tests there when changing the policy.

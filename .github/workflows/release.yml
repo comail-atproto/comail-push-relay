@@ -21,7 +21,7 @@ jobs:
   build:
     name: Build and test push relay
     if: github.event_name != 'workflow_dispatch'
-    runs-on: comail-big-nix-isolated
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,7 +66,7 @@ jobs:
     name: ci
     needs: build
     if: always() && github.event_name != 'workflow_dispatch'
-    runs-on: comail-big-nix-light
+    runs-on: ubuntu-24.04
     timeout-minutes: 1
     permissions: {}
     steps:
@@ -81,7 +81,7 @@ jobs:
     if: >-
       always() && ((github.event_name == 'push' && needs.build.result == 'success' && vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-    runs-on: comail-big-nix-isolated
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

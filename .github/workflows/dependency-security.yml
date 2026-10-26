@@ -12,7 +12,7 @@ concurrency:
 jobs:
   scan:
     name: osv-scan
-    runs-on: comail-big-nix-light
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
@@ -20,12 +20,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: comail-atproto/ci/actions/scan-dependencies@v1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Scan dependencies
+        run: >-
+          nix shell github:NixOS/nixpkgs/5adc50831c259f87faeb09ddf930d43597197473#osv-scanner
+          --command osv-scanner scan source --recursive .
   result:
     name: dependency-security
     needs: scan
-    if: always()
-    runs-on: comail-big-nix-light
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
     steps:

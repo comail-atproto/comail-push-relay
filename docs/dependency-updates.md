@@ -16,9 +16,9 @@ review because the metadata action reads only the first commit.
 
 The metadata workflow runs from main with `pull_request_target` and never checks
 out PR code. A repository-scoped App token performs the merge so main CI/CD runs.
-Its key lives in the main-only `dependency-automation` environment. The shared
-merge action runs without checking out application code. Workflow and CODEOWNERS
-changes require Scott's code-owner review.
+Its key lives in the main-only `dependency-automation` environment. The merge controller
+checks out only the trusted workflow revision, never PR code. Workflow and
+CODEOWNERS changes require Scott's code-owner review.
 
 Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces DCO,
 verified signatures, full application tests and `dependency-security`, and a
@@ -33,10 +33,14 @@ required checks and reviews against that exact SHA. It never queues a native
 merge request, so an earlier approval cannot authorize a later writer commit.
 Majors, missing metadata and agent repairs keep their normal review requirements.
 
-The shared `comail-atproto/ci` repository owns dependency policy and its
-behavioral tests. Run `uv run --locked pytest` there when changing the policy.
-Push Relay keeps its upstream, transport, server and release-health tests.
+Run `python3 -B scripts/test_dependency_merge.py` to test head changes, stale
+approvals, holds and deferred merges. `Test dependency merge policy` runs the
+same tests in CI. The maintained metadata action still classifies all packages.
 
 To pause automation, unset the flag and cancel active runs of this workflow.
 Before upgrading the old controller, disable its existing native auto-merge
 requests too. No new native requests are created by this controller.
+
+Push Relay is public and cannot call the private shared CI actions or use the
+private runner group. Keep its hosted jobs and bundled policy until a public
+shared-action distribution is reviewed.
