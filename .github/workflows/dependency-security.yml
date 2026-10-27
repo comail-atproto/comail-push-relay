@@ -20,34 +20,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Remove stale scan results
-        run: rm -f .osv-results.json
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: Scan dependencies
-        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
-        env:
-          GOTOOLCHAIN: auto
-        with:
-          scan-args: |-
-            --output=.osv-results.json
-            --format=json
-            -r
-            ./
-        continue-on-error: true
-      # A failed scan or missing lockfile must not become a clean report.
-      - name: Require a completed scan
-        run: test -s .osv-results.json
-      - name: Reject vulnerable dependencies
-        uses: google/osv-scanner-action/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
-        with:
-          scan-args: |-
-            --output=.osv-results.sarif
-            --new=.osv-results.json
-            --gh-annotations=false
-            --fail-on-vuln=true
+        run: >-
+          nix shell github:NixOS/nixpkgs/5adc50831c259f87faeb09ddf930d43597197473#osv-scanner
+          --command osv-scanner scan source --recursive .
   result:
     name: dependency-security
     needs: scan
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}

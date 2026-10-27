@@ -7,9 +7,9 @@ and every test command builds first so tests run against current `src`.
 
 | Layer | Selection | Covers |
 | --- | --- | --- |
-| Unit | `npm run test:unit` | Web Push transport/error matrix against an injected recording transport; the required `ci` result-check policy. In-process, no credentials. |
+| Unit | `npm run test:unit` | Web Push transport/error matrix against an injected recording transport. In-process, no credentials. |
 | Component | `npm run test:component` | The real relay process against a temporary store: readiness, subscription lifecycle, registration validation, retired approval routes. |
-| All | `npm test` | Both selections, `node --test test/*.test.mjs`. |
+| All | `npm test` | The upstream relay suite and `node --test test/*.test.mjs`. |
 
 ## Prerequisites
 

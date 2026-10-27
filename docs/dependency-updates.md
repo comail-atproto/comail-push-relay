@@ -40,3 +40,7 @@ same tests in CI. The maintained metadata action still classifies all packages.
 To pause automation, unset the flag and cancel active runs of this workflow.
 Before upgrading the old controller, disable its existing native auto-merge
 requests too. No new native requests are created by this controller.
+
+Push Relay is public and cannot call the private shared CI actions or use the
+private runner group. Keep its hosted jobs and bundled policy until a public
+shared-action distribution is reviewed.
