@@ -20,7 +20,7 @@ Its key lives in the main-only `dependency-automation` environment. The merge co
 checks out only the trusted workflow revision, never PR code. Workflow and
 CODEOWNERS changes require Scott's code-owner review.
 
-Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces DCO,
+Keep `COMAIL_DEPENDENCY_AUTOMERGE_ENABLED` unset until GitHub enforces
 verified signatures, full application tests and `dependency-security`, and a
 real App-merged Dependabot PR passes them and starts main CI/CD. Retain existing
 secret, customer-data, Go binary and deployment health checks. Dependabot needs its own read-only source/cache
@@ -28,7 +28,7 @@ secrets; never give it deployment credentials. Existing release holds still appl
 
 The metadata action records a policy approval for one exact verified Dependabot
 commit. The controller runs after CI and checks the current head, signature,
-DCO, approval, base, draft state and the `human` hold label again. GitHub then enforces
+approval, base, draft state and the `human` hold label again. GitHub then enforces
 required checks and reviews against that exact SHA. It never queues a native
 merge request, so an earlier approval cannot authorize a later writer commit.
 Majors, missing metadata and agent repairs keep their normal review requirements.
