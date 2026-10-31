@@ -1,0 +1,108 @@
+name: Auto-merge tested dependency updates
+on:
+  # Use trusted main metadata only; never execute PR code here.
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  workflow_run:
+    workflows: ["Check contribution policy", "Review dependency changes", "Scan dependencies", "Test and deploy push relay"]
+    types: [completed]
+    branches: ["dependabot/**"]
+permissions:
+  contents: read
+jobs:
+  approve:
+    outputs:
+      allowed: ${{ steps.policy.outputs.allowed }}
+    environment: dependency-automation
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      vars.COMAIL_DEPENDENCY_AUTOMERGE_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.pull_request.commits == 1 &&
+      github.event.pull_request.user.id == 49699333 &&
+      !startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.labels.*.name, 'human')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        id: metadata
+        with:
+          github-token: ${{ github.token }}
+      - name: Check every update against the standing policy
+        id: policy
+        env:
+          DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          allowed=$(jq -r '
+            if type == "array" then
+              length > 0 and all(.[];
+                .updateType == "version-update:semver-patch" or
+                (.updateType == "version-update:semver-minor" and
+                 ((.prevVersion // "") | test("^v?[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"))))
+            else false end' <<< "$DEPENDENCIES")
+          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
+      - name: Approve compatible updates under the standing policy
+        if: steps.policy.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" \
+            | jq -e --arg head "$HEAD_SHA" '.head.sha == $head and .commits == 1' >/dev/null
+          gh api --method POST "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            -f event=APPROVE -f "commit_id=$HEAD_SHA" -f 'body=<!-- comail-dependency-policy:v2 -->'
+
+  merge:
+    needs: approve
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      vars.COMAIL_DEPENDENCY_AUTOMERGE_ENABLED == 'true' &&
+      ((github.event_name == 'pull_request_target' && needs.approve.outputs.allowed == 'true') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    environment: dependency-automation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check the current head before accessing the merger key
+        id: ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/dependency-merge.py --check
+      - name: Mint a repository-scoped merge token
+        id: merger
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COMAIL_DEPENDENCY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COMAIL_DEPENDENCY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-statuses: read
+      - name: Merge the currently eligible tested head
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.merger.outputs.token }}
+        run: python3 -B scripts/dependency-merge.py

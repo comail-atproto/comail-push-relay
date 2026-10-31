@@ -1,0 +1,39 @@
+name: Scan dependencies
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dependency-scan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  scan:
+    name: osv-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Scan dependencies
+        run: >-
+          nix shell github:NixOS/nixpkgs/5adc50831c259f87faeb09ddf930d43597197473#osv-scanner
+          --command osv-scanner scan source --recursive .
+  result:
+    name: dependency-security
+    needs: scan
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require a completed clean scan
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+        run: test "$SCAN_RESULT" = success

@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.*
+*.log
+service-account*.json
+
+# Local review captures and retired tracker state.
+review-evidence/
+.chainlink/

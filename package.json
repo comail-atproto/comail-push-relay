@@ -1,0 +1,31 @@
+{
+  "name": "bulwark-relay",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Push notification relay for Bulwark Webmail. Accepts JMAP StateChange bodies and forwards as FCM / APNs pushes so self-hosters don't need their own Firebase project.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p node_modules/bulwark-relay/tsconfig.json --declaration --types node && tsc",
+    "test": "npm run build && npm run test:upstream && node --test test/*.test.mjs",
+    "test:upstream": "npm --prefix node_modules/bulwark-relay test",
+    "test:unit": "npm run build && node --test test/transport.test.mjs test/transport-unconfigured.test.mjs",
+    "test:component": "npm run build && node --test test/server.test.mjs",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bulwark-relay": "https://github.com/bulwarkmail/relay/archive/d4f34c04396c920a1cded5443e7361a4d94d3010.tar.gz",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/web-push": "^3.6.4",
+    "tsx": "^4.19.0",
+    "typescript": "^7.0.2"
+  }
+}

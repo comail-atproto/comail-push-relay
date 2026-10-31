@@ -1,0 +1,165 @@
+name: Test and deploy push relay
+on:
+  pull_request:
+  push:
+    branches: [main, 'source/**']
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [verify, seed, promote, rollback]
+        required: true
+      source_run_id:
+        description: Successful main push run containing the release archive
+        required: false
+      release_identity:
+        description: Retained SHA-digest identity for rollback
+        required: false
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build and test push relay
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22.23.4'
+      - run: npm ci --ignore-scripts --no-fund
+      - name: Test deployment safeguards
+        run: python3 -B -m unittest scripts.test_release_observations scripts.test_release_network scripts.test_release_guard
+      - run: npm test
+      - run: bash scripts/test-health-release.sh
+      - run: npm audit --audit-level=high
+      - name: Scan committed source for secrets
+        uses: trufflesecurity/trufflehog@4b8eb0e1e1052263d28bbfde7b4d3cb64a354aab
+        with:
+          version: 3.97.8@sha256:7fa530fec5e9e36b77b42117b319c677ab3e6eb50c979362748686a5d17185fe
+      - name: Package immutable push relay release
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+          mkdir -p .release/dist
+          cp -a dist/. .release/dist/
+          cp -a node_modules package.json .release/dist/
+          printf '{"app":"push-relay","source_sha":"%s"}\n' "$GITHUB_SHA" > .release/release.json
+          tar -C .release --exclude=dist/node_modules/.bin -czf release.tar.gz release.json dist
+          sha256sum release.tar.gz > release.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'push'
+        with:
+          name: push-relay-release
+          path: |
+            release.tar.gz
+            release.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  ci:
+    name: ci
+    needs: build
+    if: always() && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require successful push relay tests
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: test "$BUILD_RESULT" = success
+
+  deploy:
+    name: Seed, deploy, or roll back push relay
+    needs: build
+    if: >-
+      always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success' && vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment: production
+    concurrency:
+      group: push-relay-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check current release source
+        id: guard
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/check-release-source.py
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.deploy == 'true'
+        with:
+          node-version: '22.23.4'
+      - name: Connect deployment network
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.deploy == 'true'
+        env:
+          TAILSCALE_SECRET: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
+          TAILSCALE_TAG: ${{ secrets.COMAIL_DEPLOY_TS_TAG }}
+        run: bash scripts/release-network.sh connect
+      - name: Verify promotion source
+        id: source-run
+        if: github.event_name == 'workflow_dispatch' && inputs.action != 'rollback' && inputs.action != 'verify'
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          const id = process.env.SOURCE_RUN_ID;
+          if (!/^\d+$/.test(id)) throw new Error('source_run_id must be numeric');
+          const url = `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${id}`;
+          const response = await fetch(url, {headers: {Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json'}});
+          if (!response.ok) throw new Error(`source run lookup failed: ${response.status}`);
+          const run = await response.json();
+          if (run.event !== 'push' || run.head_branch !== 'main' || run.path !== '.github/workflows/release.yml') {
+            throw new Error('source run is not a main push of this workflow');
+          }
+          const jobsResponse = await fetch(`${url}/jobs?per_page=100`, {headers: {Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json'}});
+          if (!jobsResponse.ok) throw new Error(`source job lookup failed: ${jobsResponse.status}`);
+          const jobs = await jobsResponse.json();
+          if (!jobs.jobs.some(job => job.name === 'Build and test push relay' && job.conclusion === 'success')) {
+            throw new Error('source build and test job did not succeed');
+          }
+          const fs = await import('node:fs');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `source_sha=${run.head_sha}\n`);
+          NODE
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        if: (github.event_name == 'push' && steps.guard.outputs.deploy == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action != 'rollback' && inputs.action != 'verify')
+        with:
+          name: push-relay-release
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Select and verify push relay release
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.deploy == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.COMAIL_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.COMAIL_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.COMAIL_DEPLOY_HOST }}
+          DEPLOY_ORIGIN: ${{ secrets.COMAIL_DEPLOY_ORIGIN }}
+          PROMOTED_SOURCE_SHA: ${{ steps.source-run.outputs.source_sha }}
+          RELEASE_IDENTITY: ${{ inputs.release_identity }}
+        run: bash scripts/deploy-release.sh "${{ github.event_name == 'workflow_dispatch' && inputs.action == 'verify' && 'verify' || github.event_name == 'workflow_dispatch' && inputs.action == 'seed' && 'seed' || github.event_name == 'workflow_dispatch' && inputs.action == 'rollback' && 'rollback' || 'install' }}"
+      - name: Save release receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-production
+          path: ${{ runner.temp }}/comail-release-receipt.json
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Disconnect deployment network
+        if: always() && (github.event_name == 'workflow_dispatch' || steps.guard.outputs.deploy == 'true')
+        run: bash scripts/release-network.sh disconnect
