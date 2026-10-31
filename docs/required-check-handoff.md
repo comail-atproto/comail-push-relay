@@ -10,18 +10,8 @@ no result. It has no repository permissions and does not rerun the tests.
 behavior tests, `npm audit --audit-level=high`, and the pinned TruffleHog secret
 scan. It also runs the release health/identity script and, on main, packages the
 immutable release artifact. The result check runs on pull requests and main
-pushes; manual deployment and rollback dispatches retain their existing checks.
+pushes.
 
-Repository ruleset `Main branch review and CI` (id 24007679, `active`) requires
-`ci` and `Build and test push relay` with
-`strict_required_status_checks_policy: true`. Both names remain available, so
-this cleanup needs no repository settings change.
-
-An administrator can later remove the redundant `ci` requirement after proving
-that a failed `Build and test push relay` blocks merge. Remove the result job
-only after that settings change. Keep human approval, signed commits, strict
-branch freshness, and the substantive build check required.
-
-After merge, verify a main-push build and its immutable release artifact. Leave
-`COMAIL_DEPLOY_PRODUCTION_ENABLED` unchanged unless the separate host and credential
-preflight is approved.
+The `ci` and `Build and test push relay` checks remain available for branch
+protection. Keep human approval, signed commits, strict branch freshness, and
+the substantive build check required.

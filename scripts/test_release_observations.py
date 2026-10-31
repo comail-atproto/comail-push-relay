@@ -25,8 +25,11 @@ class ReleaseObservationTests(unittest.TestCase):
             "active": self.identity, "archive_sha256": "b" * 64, "observation_version": 1,
             "state": {"release": self.identity, "phase": "complete", "sequence": 42}}
         self.ssh = self.root / "ssh"
-        self.ssh.write_text('#!/usr/bin/env bash\nset -euo pipefail\ncase "${!#}" in\n status) if [[ "${OBS_HANG:-}" == 1 ]]; then exec sleep 30; fi; cat "$OBS_STATUS" ;;\n report) cat > "$OBS_REPORT"; exit "${OBS_EXIT:-0}" ;;\n *) exit 91 ;;\nesac\n')
+        self.ssh.write_text('#!/usr/bin/env bash\nset -euo pipefail\ncase "${!#}" in\n status) if [[ "${OBS_STATUS_FAIL:-}" == 1 ]]; then echo synthetic-private-network-detail >&2; exit 23; fi; if [[ "${OBS_HANG:-}" == 1 ]]; then exec sleep 30; fi; cat "$OBS_STATUS" ;;\n report) cat > "$OBS_REPORT"; exit "${OBS_EXIT:-0}" ;;\n rollback*) if [[ "${FAKE_BAD_STATUS:-}" == 1 ]]; then printf "synthetic-private-network-detail"; exit 0; fi; printf "%s\\n" "${FAKE_SSH_ERROR:-}" >&2; exit 91 ;;\n *) printf "%s\\n" "${FAKE_SSH_ERROR:-}" >&2; exit 91 ;;\nesac\n')
         self.ssh.chmod(0o700)
+        timeout = self.root / "timeout"
+        timeout.write_text('#!/bin/sh\nif [ "$1" = 120s ] && [ "${FAKE_SSH_TIMEOUT:-}" = 1 ]; then exit 124; fi\nshift; exec "$@"\n')
+        timeout.chmod(0o700)
 
     def run_observation(self, mode="observe", expected=0, **extra):
         (self.root / "comail-release-receipt.json").write_text(json.dumps(self.receipt))
@@ -74,6 +77,29 @@ class ReleaseObservationTests(unittest.TestCase):
 
     def test_native_deployment_failure_keeps_its_exit_code(self):
         self.run_observation(mode="rollback", expected=91, RELEASE_IDENTITY=self.identity)
+
+    def test_verify_reads_status_without_printing_or_reporting_it(self):
+        self.status["private_detail"] = "synthetic-private-network-detail"
+        result = self.run_observation(mode="verify")
+        self.assertNotIn("synthetic-private-network-detail", result.stdout + result.stderr)
+        self.assertFalse((self.root / "reported.json").exists())
+
+    def test_verify_failure_does_not_print_private_diagnostics(self):
+        result = self.run_observation(mode="verify", expected=23, OBS_STATUS_FAIL="1")
+        self.assertNotIn("synthetic-private-network-detail", result.stdout + result.stderr)
+        self.assertFalse((self.root / "reported.json").exists())
+
+    def test_failed_ssh_does_not_expose_private_diagnostics(self):
+        marker = "synthetic-private-hostname.invalid"
+        result = self.run_observation(mode="rollback", expected=91, RELEASE_IDENTITY=self.identity, FAKE_SSH_ERROR=marker)
+        self.assertNotIn(marker, result.stdout + result.stderr)
+
+    def test_invalid_remote_response_is_not_printed(self):
+        result = self.run_observation(mode="rollback", expected=1, RELEASE_IDENTITY=self.identity, FAKE_BAD_STATUS="1")
+        self.assertNotIn("synthetic-private-network-detail", result.stdout + result.stderr)
+
+    def test_stalled_ssh_fails_with_bounded_timeout(self):
+        self.run_observation(mode="rollback", expected=124, RELEASE_IDENTITY=self.identity, FAKE_SSH_TIMEOUT="1")
 
     def test_native_failure_cannot_send_a_leftover_receipt(self):
         self.run_observation(mode="rollback", expected=91, RELEASE_IDENTITY=self.identity, OBS_EXIT="1")
