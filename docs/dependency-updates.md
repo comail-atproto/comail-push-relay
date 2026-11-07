@@ -32,9 +32,12 @@ required checks and reviews against that exact SHA. It never queues a native
 merge request, so an earlier approval cannot authorize a later writer commit.
 Majors, missing metadata and agent repairs keep their normal review requirements.
 
-Run `python3 -B scripts/test_dependency_merge.py` to test head changes, stale
-approvals, holds and deferred merges. `Test dependency merge policy` runs the
-same tests in CI. The maintained metadata action still classifies all packages.
+The shared CI policy suite tests its current source. Push Relay keeps tests for
+its pinned v0.1.0 `comail-policy` bundle from `atmosphere-mail`, which the shared
+suite does not verify. Those tests cover stale approvals and the workflow rule
+against persistent native auto-merge requests. They run with deployment
+safeguards in the required build job. The maintained metadata action still
+classifies all packages.
 
 To pause automation, unset the flag and cancel active runs of this workflow.
 Before upgrading the old controller, disable its existing native auto-merge
