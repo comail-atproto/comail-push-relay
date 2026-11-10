@@ -74,3 +74,23 @@ to submit their work.
 ## Dependency updates
 
 See [Dependency updates](docs/dependency-updates.md).
+
+## Writing standard
+
+Use ASD-STE100 Simplified Technical English as a reference, or the style of
+Simple English Wikipedia. This is a plain-language standard, not a claim of
+formal ASD-STE100 compliance. Use it in documentation, issues, PRs, reviews,
+progress updates, saved work and messages between agents.
+
+Write clear, active sentences with familiar words. Lead with the result or
+request. Name the affected work and give enough context for a reader who has
+not followed the conversation. Explain unfamiliar terms. Keep technical meaning,
+exact identifiers, commands, evidence, uncertainty and required actions intact.
+Preserve source quotations and required protocol fields.
+
+Before sending a substantive proposal, decision or handoff, make one brief
+fresh-reader check: can someone new tell what the problem is, why the decision
+helps, what evidence supports it and who does what next? Fix missing context
+or unclear terms, then stop. Do not repeat style passes or lengthen routine
+updates to satisfy a checklist. This guidance does not change permissions,
+review requirements, security boundaries or publication holds.

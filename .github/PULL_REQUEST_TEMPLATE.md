@@ -1,3 +1,7 @@
+<!-- Use the writing standard in CONTRIBUTING.md#writing-standard: clear, active
+prose in familiar words, with enough context for a new reader. Keep technical
+meaning, evidence and uncertainty. Make one brief fresh-reader check. -->
+
 <!-- Follow CONTRIBUTING.md and AI_POLICY.md. AI disclosure is not required.
 Keep answers brief. Only What & why, Test evidence, and Deployment impact are
 required. Other sections are optional; omit unused headings. -->

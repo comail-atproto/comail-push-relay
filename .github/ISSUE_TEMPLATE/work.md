@@ -3,6 +3,10 @@ name: Work or bug report
 about: Describe a problem and what would resolve it
 ---
 
+<!-- Use the writing standard in CONTRIBUTING.md#writing-standard: clear, active
+prose in familiar words, with enough context for a new reader. Keep technical
+meaning, evidence and uncertainty. Make one brief fresh-reader check. -->
+
 <!-- Search GitHub and Linear first and reuse the canonical item. AI submissions
 are welcome under AI_POLICY.md. Agents use automated and preserve human-owned
 items. Report vulnerabilities through SECURITY.md, not this template. -->
