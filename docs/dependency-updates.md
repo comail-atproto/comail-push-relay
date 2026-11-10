@@ -39,6 +39,12 @@ against persistent native auto-merge requests. They run with deployment
 safeguards in the required build job. The maintained metadata action still
 classifies all packages.
 
+`scripts/dependency-merge.py` keeps the bundled authorization rules and uses the
+current reviewed PR title as the squash subject. The bundle's original CLI uses
+the commit subject, so this public entry point adapts its merge API payload.
+The signed commit body and trailers stay intact. Controller tests cover the
+title change and confirm that the readiness check cannot request a merge.
+
 To pause automation, unset the flag and cancel active runs of this workflow.
 Before upgrading the old controller, disable its existing native auto-merge
 requests too. No new native requests are created by this controller.
