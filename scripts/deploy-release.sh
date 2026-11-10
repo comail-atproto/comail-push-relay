@@ -2,7 +2,8 @@
 set -euo pipefail
 
 mode="${1:?install, seed, rollback, or observe}"
-target=production
+target="${DEPLOY_TARGET:-production}"
+[[ "$target" == production || "$target" == staging ]]
 [[ "$mode" == install || "$mode" == seed || "$mode" == rollback || "$mode" == observe || "$mode" == verify ]]
 test -n "${DEPLOY_KEY:-}" && test -n "${KNOWN_HOSTS:-}" && test -n "${DEPLOY_HOST:-}" && test -n "${DEPLOY_ORIGIN:-}"
 private_dir="$RUNNER_TEMP/comail-push-ssh-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -129,6 +130,9 @@ if [[ "$mode" == install || "$mode" == seed ]]; then
 else
   identity="${RELEASE_IDENTITY:?release identity}"
   [[ "$identity" =~ ^[0-9a-f]{40}-[0-9a-f]{16}$ ]]
+  if [[ "$target" == staging ]]; then
+    run_ssh status | node scripts/write-release-receipt.mjs --check-staging-host
+  fi
   activation=$(run_ssh "rollback $identity $GITHUB_RUN_NUMBER")
 fi
 if ! previous=$(printf '%s' "$activation" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).previous || ""))' 2>/dev/null); then
@@ -138,7 +142,7 @@ fi
 write_receipt() {
   receipt_status=$(run_ssh status)
   RELEASE_STATUS="$receipt_status" RELEASE_IDENTITY="$identity" RELEASE_APP=push-relay \
-    DEPLOY_TARGET=production RELEASE_OPERATION="$mode" RELEASE_PREVIOUS="$previous" RELEASE_VERIFIED="$1" \
+    DEPLOY_TARGET="$target" RELEASE_OPERATION="$mode" RELEASE_PREVIOUS="$previous" RELEASE_VERIFIED="$1" \
     node scripts/write-release-receipt.mjs >/dev/null 2>&1 || { echo 'Invalid deployment status' >&2; return 1; }
 }
 write_receipt false

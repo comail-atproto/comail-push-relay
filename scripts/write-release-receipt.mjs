@@ -1,5 +1,13 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+if (process.argv[2] === "--check-staging-host") {
+  const host = JSON.parse(readFileSync(0, "utf8"));
+  if (host.app !== "push-relay" || host.environment !== "staging") {
+    throw new Error("Expected the Push Relay staging host");
+  }
+  process.exit(0);
+}
 
 const status = JSON.parse(process.env.RELEASE_STATUS);
 const identity = process.env.RELEASE_IDENTITY;
