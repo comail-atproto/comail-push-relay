@@ -103,7 +103,11 @@ finish_release() {
 trap finish_release EXIT
 
 if [[ "$mode" == verify ]]; then
-  run_ssh status >/dev/null
+  if [[ "$target" == staging ]]; then
+    run_ssh status | node scripts/write-release-receipt.mjs --check-staging-host
+  else
+    run_ssh status >/dev/null
+  fi
   exit 0
 fi
 

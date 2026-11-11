@@ -9,6 +9,12 @@ on:
         type: choice
         options: [verify, seed, promote, rollback]
         required: true
+      target:
+        description: Protected deployment environment
+        type: choice
+        options: [production, staging]
+        default: production
+        required: true
       source_run_id:
         description: Successful main push run containing the release archive
         required: false
@@ -79,20 +85,81 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
         run: test "$BUILD_RESULT" = success
 
-  deploy:
-    name: Seed, deploy, or roll back push relay
+  staging:
+    name: Deploy and check push relay staging
     needs: build
     if: >-
-      always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success' && vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success' &&
+      vars.COMAIL_ORG_DEPLOY_STAGING_ENABLED == 'true' && vars.COMAIL_DEPLOY_STAGING_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment: staging
+    concurrency:
+      group: push-relay-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check current release source
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/check-release-source.py
+      - name: Require current source
+        env:
+          DEPLOY: ${{ steps.guard.outputs.deploy }}
+        run: test "$DEPLOY" = true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22.23.4'
+      - name: Connect deployment network
+        env:
+          TAILSCALE_SECRET: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
+          TAILSCALE_TAG: ${{ secrets.COMAIL_DEPLOY_TS_TAG }}
+        run: bash scripts/release-network.sh connect
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: push-relay-release
+      - name: Deploy and check staging
+        env:
+          DEPLOY_TARGET: staging
+          DEPLOY_KEY: ${{ secrets.COMAIL_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.COMAIL_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.COMAIL_DEPLOY_HOST }}
+          DEPLOY_ORIGIN: ${{ secrets.COMAIL_DEPLOY_ORIGIN }}
+        run: bash scripts/deploy-release.sh install
+      - name: Verify staging receipt matches this archive
+        run: node scripts/check-staging-receipt.mjs
+      - name: Save staging receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-staging
+          path: ${{ runner.temp }}/comail-release-receipt.json
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Disconnect deployment network
+        if: always()
+        run: bash scripts/release-network.sh disconnect
+
+  deploy:
+    name: Seed, deploy, or roll back push relay
+    needs: [build, staging]
+    if: >-
+      always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success' && needs.staging.result == 'success' && vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       actions: read
-    environment: production
+    environment: ${{ inputs.target || 'production' }}
     concurrency:
-      group: push-relay-production
+      group: push-relay-${{ inputs.target || 'production' }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,6 +216,7 @@ jobs:
       - name: Select and verify push relay release
         if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.deploy == 'true'
         env:
+          DEPLOY_TARGET: ${{ inputs.target || 'production' }}
           DEPLOY_KEY: ${{ secrets.COMAIL_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.COMAIL_DEPLOY_KNOWN_HOSTS }}
           DEPLOY_HOST: ${{ secrets.COMAIL_DEPLOY_HOST }}
@@ -160,7 +228,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-production
+          name: push-relay-receipt-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.target || 'production' }}
           path: ${{ runner.temp }}/comail-release-receipt.json
           if-no-files-found: ignore
           retention-days: 90

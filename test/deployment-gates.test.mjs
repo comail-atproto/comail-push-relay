@@ -17,7 +17,7 @@ function eligible(job, target, org = 'true', packageFlag = 'true', event = 'push
   // Actions compares strings without case sensitivity.
   vars[`COMAIL_ORG_DEPLOY_${target}_ENABLED`] = org.toLowerCase();
   vars[`COMAIL_DEPLOY_${target}_ENABLED`] = packageFlag.toLowerCase();
-  const needs = Object.fromEntries(['frontend', 'release', 'build'].map((name) => [name, { result }]));
+  const needs = Object.fromEntries(['frontend', 'release', 'build', 'staging'].map((name) => [name, { result }]));
   return new Function('github', 'needs', 'vars', 'inputs', 'always', `return (${condition});`)(
     { event_name: event, ref: 'refs/heads/main' }, needs, vars,
     { target: target.toLowerCase(), action: 'promote' }, () => true,
