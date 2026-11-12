@@ -1,0 +1,17 @@
+name: Check issue link
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions: {}
+concurrency:
+  group: issue-link-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  issue-link:
+    name: issue-link
+    runs-on: comail-big-nix-light
+    timeout-minutes: 5
+    steps:
+      - uses: comail-atproto/ci/actions/issue-link@main
+        with:
+          body: ${{ github.event.pull_request.body }}
