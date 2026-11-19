@@ -13,6 +13,16 @@ before building the adapter. Update the immutable archive URL in `package.json`
 and its lockfile together, then run the compatibility tests. Upstream’s source
 and license remain in the installed dependency; no build step rewrites them.
 
+## Releases
+
+Main builds and tests the relay once, then publishes the tested `release.tar.gz`
+to a versioned GitHub Release with build provenance. It contains `release.json`
+and `dist/` with the compiled server, production dependencies, and package file.
+The same run deploys that version to production. The host installer restarts
+the relay, checks `/api/health` and restores the previous release if the check
+fails. To roll back, run the workflow by hand with `rollback` and an older
+version.
+
 ## Endpoints
 
 | Method | Path | Purpose |
