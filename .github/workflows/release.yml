@@ -1,18 +1,8 @@
-name: Test, publish and deploy push relay
+name: Test and publish push relay
 on:
   pull_request:
   push:
     branches: [main, 'source/**']
-  workflow_dispatch:
-    inputs:
-      action:
-        type: choice
-        options: [deploy, rollback]
-        required: true
-      version:
-        description: Release tag (vX.Y.Z) or, for rollback, a retained release name
-        type: string
-        required: true
 permissions:
   contents: read
 jobs:
@@ -67,8 +57,6 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    outputs:
-      version: ${{ steps.release-notes.outputs.tag-name }}
     permissions:
       attestations: write
       contents: write
@@ -76,61 +64,33 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: push-relay-release
-      - name: Publish release notes
-        id: release-notes
-        uses: comail-atproto/ci/actions/release-notes@v1
-        with:
-          app-client-id: ${{ vars.COMAIL_AGENTS_APP_CLIENT_ID }}
-          app-private-key: ${{ secrets.COMAIL_AGENTS_APP_PRIVATE_KEY }}
-          bootstrap-sha: 4f137fdd5971ea5c53cf49575d4a145b44a3a68e
+      - name: Choose the next release version
+        id: version
+        run: |
+          version="$(python3 scripts/release-version.py)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Write the release checksum
+        if: steps.version.outputs.version != ''
+        run: sha256sum release.tar.gz > release.sha256
       - name: Attest the tested release archive
-        if: steps.release-notes.outputs.tag-name != ''
+        if: steps.version.outputs.version != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release.tar.gz
-      - name: Publish the tested release archive
-        if: steps.release-notes.outputs.tag-name != ''
-        uses: comail-atproto/ci/actions/publish-release@v1
-        with:
-          version: ${{ steps.release-notes.outputs.tag-name }}
-          archive: release.tar.gz
-          token: ${{ github.token }}
-
-  deploy:
-    name: Deploy push relay to production
-    needs: release
-    if: >-
-      !cancelled() && github.ref == 'refs/heads/main' &&
-      ((github.event_name == 'push' && needs.release.result == 'success' && needs.release.outputs.version != '' &&
-        vars.COMAIL_ORG_DEPLOY_PRODUCTION_ENABLED == 'true' && vars.COMAIL_DEPLOY_PRODUCTION_ENABLED == 'true') ||
-       github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      attestations: read
-      contents: read
-    environment: production
-    concurrency:
-      group: push-relay-production
-      cancel-in-progress: false
-    steps:
-      # The host installer checks Push Relay's health and restores the previous release if it fails.
-      - name: Deploy the selected version
-        uses: comail-atproto/ci/actions/deploy-release@v1
-        with:
-          operation: ${{ inputs.action || 'deploy' }}
-          version: ${{ inputs.version || needs.release.outputs.version }}
-          token: ${{ github.token }}
-          ssh-key: ${{ secrets.COMAIL_DEPLOY_SSH_KEY }}
-          known-hosts: ${{ vars.COMAIL_DEPLOY_KNOWN_HOSTS }}
-          host: ${{ vars.COMAIL_DEPLOY_HOST }}
-          user: comail-push-relay-deploy
-          tailscale-client-id: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_ID }}
-          tailscale-client-secret: ${{ secrets.COMAIL_DEPLOY_TS_CLIENT_SECRET }}
+      - name: Publish the release
+        if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          gh release create "$VERSION"
+          --target "$GITHUB_SHA" --prerelease --generate-notes
+          release.tar.gz release.sha256
 
   ci:
     name: ci
