@@ -16,7 +16,7 @@ and license remain in the installed dependency; no build step rewrites them.
 ## Releases
 
 Main builds and tests the relay once, then publishes a versioned prerelease with
-`release.tar.gz`, `release.sha256`, and build provenance; it contains
+`release.tar.gz` and `release.sha256`; it contains
 `release.json` and `dist/` with the compiled server, production dependencies,
 and package file. `comail-infra` deploys the prerelease and marks it latest after
 deployment. To roll back, use `comail-infra` to deploy an older retained release.
